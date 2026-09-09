@@ -202,18 +202,25 @@ FORMAT REQUIRED:
   }
 
   async generateOpening() {
-    const prompt = `Generate a brief, warm event welcome for Next Wave (${this.conferenceName}).
-Instructions:
-1. Provide a brief, engaging 1-sentence introduction to the event.
-2. Warmly ask the speaker or guest to suggest a question, introduce their topic, or share any doubts they may have.
-3. Keep the entire opening conversational and brief (2 sentences max, ~35 words).
-4. Do NOT ask a specific pre-set question or assume a hardcoded guest topic—let the speaker suggest their question or doubt first.
-5. Include <think>...</think> reasoning steps.`;
+    const defaultOpening = {
+      thinking: "1. Intent: Welcome speaker & audience to Next Wave.\n2. Action: Introduce JOY as AI co-host.\n3. Volley: Invite speaker to suggest a question or state any doubts.\n4. Cadence: Warm, punchy podcast host.",
+      spokenResponse: `Welcome to Next Wave! I'm JOY, your AI co-host. We're thrilled to have you at the mic today. Please feel free to suggest a question, introduce your topic, or share any doubts you'd like to discuss.`
+    };
 
-    return await this._processLLMRequest([
-      { role: "system", content: this._buildSystemPrompt() },
-      { role: "user", content: prompt }
-    ]);
+    try {
+      const prompt = `Generate a brief 2-sentence warm event welcome for Next Wave (${this.conferenceName}). Introduce Next Wave, then invite the speaker to suggest a question or state any doubts. Do not ask pre-set questions.`;
+      const res = await this._processLLMRequest([
+        { role: "system", content: this._buildSystemPrompt() },
+        { role: "user", content: prompt }
+      ]);
+      if (res && res.spokenResponse && !res.spokenResponse.includes("thinkthink") && !res.spokenResponse.includes("reasoning steps")) {
+        return res;
+      }
+    } catch (err) {
+      console.warn("Error generating opening LLM call:", err);
+    }
+
+    return defaultOpening;
   }
 
   /**
@@ -310,13 +317,19 @@ Instructions:
 
   _dynamicFallbackGenerator(messages) {
     const lastUserMessage = [...messages].reverse().find(m => m.role === "user")?.content || "";
-    // Strip guest name prefix if present
-    const cleanMessage = lastUserMessage.replace(/^\[.*?\]:\s*/, '');
-    const lower = cleanMessage.toLowerCase().trim();
+    // Strip tags, thinking blocks, guest prefixes, and system instruction leakage
+    const cleanMessage = lastUserMessage
+      .replace(/^\[.*?\]:\s*/, '')
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/<\/?[^>]+(>|$)/g, '')
+      .replace(/include\s+<think>[\s\S]*/gi, '')
+      .replace(/reasoning\s+steps/gi, '')
+      .trim();
+
+    const lower = cleanMessage.toLowerCase();
     const retrieved = this.ragKB.search(cleanMessage, 1);
     const ragSnippet = retrieved.length > 0 ? retrieved[0] : null;
 
-    // Extract guest name from message format "[Name]: message"
     const nameMatch = lastUserMessage.match(/^\[(.*?)\]:/);
     const speakerName = nameMatch ? nameMatch[1] : 'our guest';
 
@@ -333,14 +346,14 @@ Instructions:
       thinking = `1. Intent: Audio verification.\n2. Action: Casual confirmation.\n3. Volley: Invite question or doubt.`;
       spokenResponse = `Loud and clear! Audio levels are spot-on. What question or topic would you like to kick off with today?`;
     }
-    // 3. Greeting
-    else if (lower === "hello" || lower === "hi" || lower.includes("happy to be here") || lower.includes("thanks for having me")) {
-      thinking = `1. Intent: Friendly greeting.\n2. Action: Warm event intro.\n3. Volley: Ask for guest's question or doubts.\n4. Cadence: Warm podcast host.`;
+    // 3. Greeting or Opening Welcome Fallback
+    else if (lower === "hello" || lower === "hi" || lower.includes("happy to be here") || lower.includes("thanks for having me") || lower.includes("welcome for next wave") || lower.includes("generate a brief") || lower.length === 0) {
+      thinking = `1. Intent: Friendly greeting / Event Opening.\n2. Action: Warm event intro.\n3. Volley: Invite guest to ask their question or doubts.\n4. Cadence: Warm podcast host.`;
       spokenResponse = `Welcome to Next Wave! We're thrilled to have you at the mic. Please feel free to suggest a question or bring up any doubts you'd like to discuss.`;
     }
-    // 4. Dynamic contextual response based on user's exact message
+    // 4. Dynamic contextual response based on user's actual spoken text
     else {
-      const stopWords = new Set(["the","a","an","is","are","was","were","in","on","at","to","for","of","with","and","or","it","that","this","i","you","we","they","my","your","about","how","what","why","where","when","can","do","does","did"]);
+      const stopWords = new Set(["the","a","an","is","are","was","were","in","on","at","to","for","of","with","and","or","it","that","this","i","you","we","they","my","your","about","how","what","why","where","when","can","do","does","did","generate","brief","warm","event","welcome","include","think","thinkthink","reasoning","steps"]);
       const words = cleanMessage.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w.toLowerCase()));
       const topicKeywords = words.length > 0 ? words.slice(-3).join(' ') : cleanMessage;
 
@@ -356,18 +369,21 @@ Instructions:
 
   _parseThinkingAndResponse(rawText) {
     let thinking = "";
-    let spokenResponse = rawText;
+    let spokenResponse = rawText || "";
 
-    const thinkMatch = rawText.match(/<think>([\s\S]*?)<\/think>/i);
+    const thinkMatch = spokenResponse.match(/<think>([\s\S]*?)<\/think>/i);
     if (thinkMatch) {
       thinking = thinkMatch[1].trim();
-      spokenResponse = rawText.replace(/<think>[\s\S]*?<\/think>/i, "").trim();
+      spokenResponse = spokenResponse.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
     } else {
-      thinking = "1. Intent: Analyzing statement and active listening.\n2. Sustainability: Aligning with energy efficiency.\n3. Volley: Synthesizing conversational follow-up question.";
+      thinking = "1. Intent: Analyzing statement and active listening.\n2. Volley: Synthesizing conversational follow-up question.";
     }
 
-    // Strip "JOY:" or "Joy:" from the start of the spoken response
-    spokenResponse = spokenResponse.replace(/^JOY:\s*/i, "").trim();
+    spokenResponse = spokenResponse
+      .replace(/<think>|<\/think>/gi, "")
+      .replace(/thinkthink\s+reasoning\s+steps/gi, "your question")
+      .replace(/^JOY:\s*/i, "")
+      .trim();
 
     return { thinking, spokenResponse };
   }
