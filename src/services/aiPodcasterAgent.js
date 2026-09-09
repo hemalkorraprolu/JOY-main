@@ -202,9 +202,13 @@ FORMAT REQUIRED:
   }
 
   async generateOpening() {
-    const prompt = `Welcome everyone to ${this.conferenceName}!
-Generate an engaging, warm event welcome (2 sentences max, ~35 words).
-Introduce Next Wave, state that today we are exploring AI innovations, technology, and student projects, and announce that the floor is now open for our speakers and students to ask questions or share their work. Do NOT ask a specific question to any hardcoded guest name yet—wait for the speaker to speak first. Include <think>...</think> reasoning steps.`;
+    const prompt = `Generate a brief, warm event welcome for Next Wave (${this.conferenceName}).
+Instructions:
+1. Provide a brief, engaging 1-sentence introduction to the event.
+2. Warmly ask the speaker or guest to suggest a question, introduce their topic, or share any doubts they may have.
+3. Keep the entire opening conversational and brief (2 sentences max, ~35 words).
+4. Do NOT ask a specific pre-set question or assume a hardcoded guest topic—let the speaker suggest their question or doubt first.
+5. Include <think>...</think> reasoning steps.`;
 
     return await this._processLLMRequest([
       { role: "system", content: this._buildSystemPrompt() },
@@ -321,18 +325,18 @@ Introduce Next Wave, state that today we are exploring AI innovations, technolog
 
     // 1. Self-introduction
     if (lower.includes("about yourself") || lower.includes("who are you") || lower.includes("tell me about you") || lower.includes("what is your name") || lower.includes("who is joy") || lower.includes("what can you do")) {
-      thinking = `1. Intent: Asked for host & event intro.\n2. Action: Welcome guest to Next Wave podcast.\n3. Volley: Invite speaker to share their work.\n4. Cadence: Punchy human host.`;
-      spokenResponse = `Welcome to Next Wave! I'm JOY, your AI co-host. Whether you're a guest speaker or a student researcher, what specific project or idea are you diving into today?`;
+      thinking = `1. Intent: Asked for host & event intro.\n2. Action: Welcome guest to Next Wave.\n3. Volley: Invite speaker to suggest a question or state any doubts.\n4. Cadence: Punchy human host.`;
+      spokenResponse = `Welcome to Next Wave! I'm JOY, your AI co-host. What questions or topics would you like to explore today, or do you have any doubts we can dive into?`;
     }
     // 2. Mic / Audio check
     else if (lower.includes("understand") || lower.includes("hear me") || lower.includes("testing") || lower.includes("hello hello") || lower.includes("can you hear")) {
-      thinking = `1. Intent: Audio verification.\n2. Action: Casual, conversational confirmation.\n3. Volley: Direct pivot to guest topic.`;
-      spokenResponse = `Loud and clear! Audio levels are spot-on. What topic or idea would you like to explore first?`;
+      thinking = `1. Intent: Audio verification.\n2. Action: Casual confirmation.\n3. Volley: Invite question or doubt.`;
+      spokenResponse = `Loud and clear! Audio levels are spot-on. What question or topic would you like to kick off with today?`;
     }
     // 3. Greeting
     else if (lower === "hello" || lower === "hi" || lower.includes("happy to be here") || lower.includes("thanks for having me")) {
-      thinking = `1. Intent: Friendly greeting.\n2. Action: Warm host welcome.\n3. Volley: Ask what brought them to the mic.`;
-      spokenResponse = `Welcome to the mic! Great to have you with us today. What brings you to Next Wave today?`;
+      thinking = `1. Intent: Friendly greeting.\n2. Action: Warm event intro.\n3. Volley: Ask for guest's question or doubts.\n4. Cadence: Warm podcast host.`;
+      spokenResponse = `Welcome to Next Wave! We're thrilled to have you at the mic. Please feel free to suggest a question or bring up any doubts you'd like to discuss.`;
     }
     // 4. Dynamic contextual response based on user's exact message
     else {
