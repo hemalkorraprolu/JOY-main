@@ -174,7 +174,7 @@ export class AIPodcasterAgent {
     const guestContext = this._buildGuestContext();
 
     return `You are JOY, an authentic, human-like AI podcast co-host at ${this.conferenceName}.
-Topic: ${this.topic}
+Topic Context: ${this.topic}
 
 ${persona.systemPromptFlavor}
 
@@ -189,12 +189,12 @@ CORE PODCAST CONVERSATION RULES (NEVER SOUND LIKE A CHATBOT):
 3. ACTIVE LISTENING & MIRRORING: Immediately acknowledge or mirror one specific phrase or concept the speaker said.
 4. CONVERSATIONAL VOLLEY: Offer a brief reaction or trade-off, then volley the mic back with an open follow-up question.
 5. NO CHATBOT TROPES: Strictly NO bullet points, numbered lists, textbook definitions, or robotic pleasantries.
-6. SUSTAINABILITY GROUNDING: Ground the dialogue in datacenter energy efficiency, clean power matching, carbon-aware scheduling, circular hardware, and green AI models.
+6. TOPIC CONTINUITY & FLEXIBILITY: Stay 100% focused on whatever topic or track the speaker brings up. Directly address their new points and follow their lead without forcing unrelated pivots.
 
 FORMAT REQUIRED:
 <think>
 1. Speaker Intent & Core Claim: [What did the speaker/student assert or ask?]
-2. Sustainability Hook: [What specific energy/carbon/compute angle connects here?]
+2. Topic Hook: [What specific angle connects to what the speaker just said?]
 3. Conversational Volley: [Why this brief reflection and open follow-up?]
 4. Cadence Check: [Verify response is 1-2 punchy spoken sentences, under 45 words]
 </think>
@@ -204,7 +204,7 @@ FORMAT REQUIRED:
   async generateOpening() {
     const prompt = `Welcome everyone to ${this.conferenceName}!
 Generate an engaging, warm event welcome (2 sentences max, ~35 words).
-Introduce Next Wave, state that today we are exploring how AI and sustainability intersect across energy, compute, and student innovations, and announce that the floor is now open for our speakers and students to ask questions or share their projects. Do NOT ask a specific question to any hardcoded guest name yet—wait for the speaker to speak first. Include <think>...</think> reasoning steps.`;
+Introduce Next Wave, state that today we are exploring AI innovations, technology, and student projects, and announce that the floor is now open for our speakers and students to ask questions or share their work. Do NOT ask a specific question to any hardcoded guest name yet—wait for the speaker to speak first. Include <think>...</think> reasoning steps.`;
 
     return await this._processLLMRequest([
       { role: "system", content: this._buildSystemPrompt() },
@@ -256,10 +256,18 @@ Introduce Next Wave, state that today we are exploring how AI and sustainability
   }
 
   async _processLLMRequest(messages) {
-    if (this.engine === "groq" && this.groqApiKey) {
-      try { return await this._callGroqAPI(messages); } catch (err) { console.warn("Groq failed:", err); }
+    if (this.engine !== "ollama") {
+      try {
+        return await this._callGroqAPI(messages);
+      } catch (err) {
+        console.warn("Groq proxy failed, trying fallback:", err);
+      }
     } else if (this.engine === "ollama") {
-      try { return await this._callOllamaAPI(messages); } catch (err) { console.warn("Ollama failed:", err); }
+      try {
+        return await this._callOllamaAPI(messages);
+      } catch (err) {
+        console.warn("Ollama failed:", err);
+      }
     }
 
     return this._dynamicFallbackGenerator(messages);
@@ -270,7 +278,13 @@ Introduce Next Wave, state that today we are exploring how AI and sustainability
     const res = await fetch(`${backendUrl}/api/proxy-chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: this.groqApiKey, model: "openai/gpt-oss-120b", messages, temperature: 0.75, max_tokens: 800 })
+      body: JSON.stringify({
+        api_key: this.groqApiKey || undefined,
+        model: "qwen/qwen3.6-27b",
+        messages,
+        temperature: 0.7,
+        max_tokens: 800
+      })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -297,7 +311,6 @@ Introduce Next Wave, state that today we are exploring how AI and sustainability
     const lower = cleanMessage.toLowerCase().trim();
     const retrieved = this.ragKB.search(cleanMessage, 1);
     const ragSnippet = retrieved.length > 0 ? retrieved[0] : null;
-    const persona = this._getPersona();
 
     // Extract guest name from message format "[Name]: message"
     const nameMatch = lastUserMessage.match(/^\[(.*?)\]:/);
@@ -308,55 +321,30 @@ Introduce Next Wave, state that today we are exploring how AI and sustainability
 
     // 1. Self-introduction
     if (lower.includes("about yourself") || lower.includes("who are you") || lower.includes("tell me about you") || lower.includes("what is your name") || lower.includes("who is joy") || lower.includes("what can you do")) {
-      thinking = `1. Intent: Asked for host & event intro.\n2. Sustainability Focus: Ground JOY in Next Wave's green computing mission.\n3. Volley: Keep it under 35 words and welcome speakers/students to share.\n4. Cadence: Punchy human podcast host.`;
-      spokenResponse = `Welcome to Next Wave! I'm JOY, your AI co-host exploring where AI innovations and sustainability intersect. Whether you're a guest speaker or a student, what topic or project are you diving into today?`;
+      thinking = `1. Intent: Asked for host & event intro.\n2. Action: Welcome guest to Next Wave podcast.\n3. Volley: Invite speaker to share their work.\n4. Cadence: Punchy human host.`;
+      spokenResponse = `Welcome to Next Wave! I'm JOY, your AI co-host. Whether you're a guest speaker or a student researcher, what specific project or idea are you diving into today?`;
     }
     // 2. Mic / Audio check
     else if (lower.includes("understand") || lower.includes("hear me") || lower.includes("testing") || lower.includes("hello hello") || lower.includes("can you hear")) {
-      thinking = `1. Intent: Audio verification.\n2. Action: Casual, conversational podcast confirmation.\n3. Volley: Direct pivot to clean energy compute at Next Wave.`;
-      spokenResponse = `Loud and clear! Audio levels are spot-on here at Next Wave. What sustainability question or idea would you like to explore first?`;
+      thinking = `1. Intent: Audio verification.\n2. Action: Casual, conversational confirmation.\n3. Volley: Direct pivot to guest topic.`;
+      spokenResponse = `Loud and clear! Audio levels are spot-on. What topic or idea would you like to explore first?`;
     }
     // 3. Greeting
     else if (lower === "hello" || lower === "hi" || lower.includes("happy to be here") || lower.includes("thanks for having me")) {
-      thinking = `1. Intent: Friendly greeting.\n2. Action: Warm host welcome.\n3. Volley: Ask what brought them to Next Wave.`;
-      spokenResponse = `Welcome to the mic at Next Wave! Great to have you with us today. What brings you to our AI & Sustainability summit?`;
+      thinking = `1. Intent: Friendly greeting.\n2. Action: Warm host welcome.\n3. Volley: Ask what brought them to the mic.`;
+      spokenResponse = `Welcome to the mic! Great to have you with us today. What brings you to Next Wave today?`;
     }
-    // 4. Technical / substantive response
+    // 4. Dynamic contextual response based on user's exact message
     else {
-      thinking = `1. Intent Analysis: ${speakerName} touched on "${cleanMessage.substring(0, 45)}...".\n2. Sustainability Hook: ${ragSnippet ? `Anchored to ${ragSnippet.source}` : 'Focusing on energy intensity & grid capacity'}.\n3. Conversational Volley: React directly to their point, then pass the mic with a focused "how" or "why" question.\n4. Cadence Check: Strict 1-2 sentences, conversational tone, zero lecture.`;
+      const stopWords = new Set(["the","a","an","is","are","was","were","in","on","at","to","for","of","with","and","or","it","that","this","i","you","we","they","my","your","about","how","what","why","where","when","can","do","does","did"]);
+      const words = cleanMessage.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w.toLowerCase()));
+      const topicKeywords = words.length > 0 ? words.slice(-3).join(' ') : cleanMessage;
 
-      const questionSets = {
-        alex: [
-          `That energy metric is fascinating. When you measured the power draw under peak cluster load, where did you see the biggest thermal spike?`,
-          `I love that approach to efficiency. But when scaling that across thousands of GPUs, what's the toughest infrastructure bottleneck you ran into?`,
-          `That's a huge trade-off. How does that compute savings translate to actual kilowatt-hours saved on the grid?`,
-          `Very sharp point. If you had to cut another 30% of energy consumption from that pipeline tomorrow, where would you start?`
-        ],
-        elena: [
-          `That's a massive shift in how we think about green compute. How do you see that reshaping datacenter design over the next five years?`,
-          `I love the vision behind that. If clean-energy AI becomes the industry standard, what unexpected application gets unlocked first?`,
-          `That connects right to the heart of net-zero AI. What would it take for every cloud provider to adopt that tomorrow?`,
-          `Inspiring perspective! Fast-forward to 2030—does this fundamentally solve AI's power hunger, or just buy us time?`
-        ],
-        marcus: [
-          `Wait, let me push back on that. When renewable generation drops on a cloudy day, how does your workload gracefully throttle without wrecking latency?`,
-          `That sounds great on paper, but aren't we just shifting the carbon burden somewhere else in the supply chain?`,
-          `Bold claim! What's the hidden cost or hardware wear-and-tear that advocates for this approach usually overlook?`,
-          `I'm skeptical that cloud giants will adopt this if it costs even 2% in throughput. What's the real economic incentive here?`
-        ]
-      };
-
-      const questions = questionSets[this.hostPersonaId] || questionSets.alex;
-
-      let idx = Math.floor(Math.random() * questions.length);
-      while (this.usedTemplates.has(`${this.hostPersonaId}_${idx}`) && this.usedTemplates.size < questions.length * 3) {
-        idx = (idx + 1) % questions.length;
-      }
-      this.usedTemplates.add(`${this.hostPersonaId}_${idx}`);
+      thinking = `1. Intent Analysis: ${speakerName} introduced "${cleanMessage.substring(0, 45)}...".\n2. Context Extraction: Focusing directly on ${topicKeywords}.\n3. Volley: Acknowledge their point directly and ask an open follow-up.\n4. Cadence Check: 1-2 punchy spoken sentences.`;
 
       spokenResponse = ragSnippet
-        ? `That links directly to your findings in ${ragSnippet.source}. ${questions[idx]}`
-        : `${questions[idx]}`;
+        ? `That links directly to your findings in ${ragSnippet.source}. Regarding ${topicKeywords}, how do you see that playing out in practice?`
+        : `That's an insightful point about ${topicKeywords}! What's the main challenge or trade-off you've encountered when putting that into action?`;
     }
 
     return { thinking, spokenResponse };
