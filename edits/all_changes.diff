@@ -1,0 +1,172 @@
+diff --git a/.env b/.env
+--- a/.env
++++ b/.env
+@@ -4,3 +4,3 @@
+ GROQ_API_KEY=gsk_your_api_key_here
+-VITE_GROQ_API_KEY=gsk_your_api_key_here
++VITE_GROQ_API_KEY=gsk_your_api_key_here
+ 
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -7,1 +7,2 @@
+ groq
++python-dotenv
+ 
+diff --git a/backend/main.py b/backend/main.py
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1,7 +1,7 @@
+-"""
+-Backend for JOY - RAG-Powered AI Podcaster Voice Agent
++"""Backend for JOY - RAG-Powered AI Podcaster Voice Agent.
++
+ Stack:
+- - RAG Indexer: In-Memory Vector / TF-IDF Semantic Search over uploaded Guest Documents
++ - RAG Indexer: In-Memory Vector / TF-IDF Semantic Search over Guest Documents
+  - Speech-to-Text: Faster-Whisper (Run locally on CPU/GPU)
+  - Reasoning & LLM: Ollama (Llama 3.2 / DeepSeek R1)
+  - Text-to-Speech: Edge-TTS (Microsoft Neural Voice - hyper-realistic & free)
+@@ -9,15 +9,16 @@
+ import os
+ import re
+ import tempfile
+-import asyncio
+-from typing import List, Optional
+-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
++import traceback
++
++import edge_tts
++from dotenv import load_dotenv
++from fastapi import FastAPI, Form, HTTPException
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.responses import FileResponse
+-from pydantic import BaseModel
+-import edge_tts
+ from groq import Groq
++from pydantic import BaseModel
+ 
++load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
++
+ app = FastAPI(title="JOY - RAG AI Podcaster Agent Backend")
+@@ -30,8 +31,11 @@
+     allow_headers=["*"],
+ )
+ 
++
+ # RAG Knowledge Storage
+ class DocumentChunk(BaseModel):
++    """Represents a chunk of indexed text from a guest document."""
++
+     id: str
+     title: str
+     text: str
+@@ -41,1 +45,1 @@
+-knowledge_base: List[DocumentChunk] = []
++knowledge_base: list[DocumentChunk] = []
+@@ -58,2 +66,8 @@
+ class KnowledgeUploadRequest(BaseModel):
++    """Payload for uploading guest knowledge base content."""
++
+     title: str
+     content: str
+ 
+ class ChatRequest(BaseModel):
++    """Payload for podcast chat inquiries."""
++
+     guest_statement: str
+@@ -69,1 +83,2 @@
+ def read_root():
++    """Health check and status endpoint."""
+@@ -86,1 +101,2 @@
+-def search_rag(query: str, top_k: int = 2) -> List[DocumentChunk]:
++def search_rag(query: str, top_k: int = 2) -> list[DocumentChunk]:
++    """Search the in-memory RAG knowledge base using word matching."""
+@@ -104,2 +120,4 @@
+ class ProxyChatRequest(BaseModel):
++    """Request structure for proxying chat calls to Groq."""
++
+     messages: list
+-    api_key: str
++    api_key: str | None = None
+     model: str = "openai/gpt-oss-120b"
+@@ -111,4 +129,4 @@
+ async def proxy_chat(req: ProxyChatRequest):
+-    """Proxies chat requests to Groq to bypass browser CORS limitations."""
+-    if not req.api_key:
+-        raise HTTPException(status_code=400, detail="Groq API key is required. Set it in Settings > Engine & Voice.")
++    """Proxy chat requests to Groq to bypass browser CORS limitations."""
++    active_key = req.api_key or os.environ.get("GROQ_API_KEY")
++    if not active_key:
++        raise HTTPException(status_code=400, detail="Groq API key is required. Set it in Settings > Engine & Voice or in .env.")
+     try:
+-        client = Groq(api_key=req.api_key)
++        client = Groq(api_key=active_key)
+@@ -134,4 +152,4 @@
+     except Exception as e:
+-        import traceback
+         traceback.print_exc()
+-        raise HTTPException(status_code=500, detail=f"Groq execution error: {str(e)}")
++        raise HTTPException(status_code=500, detail=f"Groq execution error: {e!s}") from e
+@@ -140,17 +158,16 @@
+ async def synthesize_speech(text: str = Form(...), voice: str = Form("en-US-AvaNeural")):
+-    """Generates hyper-realistic neural audio for JOY using Edge-TTS."""
++    """Generate hyper-realistic neural audio for JOY using Edge-TTS."""
+     try:
+-        clean_text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
+-        
+-        output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+-        output_path = output_file.name
+-        output_file.close()
++        clean_text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
++        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
++            output_path = tmp.name
+         communicate = edge_tts.Communicate(clean_text, voice)
+         await communicate.save(output_path)
+         return FileResponse(output_path, media_type="audio/mpeg", filename="joy_voice.mp3")
+     except Exception as e:
+-        import traceback
+         traceback.print_exc()
+-        raise HTTPException(status_code=500, detail=f"TTS synthesis error: {str(e)}")
++        raise HTTPException(status_code=500, detail=f"TTS synthesis error: {e!s}") from e
+
+diff --git a/src/components/AIInterface.jsx b/src/components/AIInterface.jsx
+--- a/src/components/AIInterface.jsx
++++ b/src/components/AIInterface.jsx
+@@ -58,2 +58,2 @@
+-    engine: 'browser',
+-    groqApiKey: '',
++    engine: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? 'groq' : 'browser',
++    groqApiKey: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? import.meta.env.VITE_GROQ_API_KEY : '',
+
+diff --git a/src/components/PodcastStudio.jsx b/src/components/PodcastStudio.jsx
+--- a/src/components/PodcastStudio.jsx
++++ b/src/components/PodcastStudio.jsx
+@@ -60,2 +60,2 @@
+-    engine: 'browser',
+-    groqApiKey: '',
++    engine: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? 'groq' : 'browser',
++    groqApiKey: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? import.meta.env.VITE_GROQ_API_KEY : '',
+
+diff --git a/.vscode/settings.json b/.vscode/settings.json
+new file mode 100644
+--- /dev/null
++++ b/.vscode/settings.json
+@@ -0,0 +1,6 @@
++{
++  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/bin/python",
++  "python.analysis.extraPaths": [
++    "${workspaceFolder}/backend"
++  ]
++}
+
+diff --git a/pyrightconfig.json b/pyrightconfig.json
+new file mode 100644
+--- /dev/null
++++ b/pyrightconfig.json
+@@ -0,0 +1,5 @@
++{
++  "venvPath": "backend",
++  "venv": "venv",
++  "extraPaths": ["backend"]
++}

@@ -1,0 +1,99 @@
+[
+  {
+    "id": "fb_host_turn_1788886583264",
+    "timestamp": "2026-09-08T16:57:05.154Z",
+    "guest_query": "Host Podcast Opening Question",
+    "host_response": "Welcome to the Global AI & Sustainability Summit 2026, where we explore how clean grids and efficient silicon can truly decarbonize AI. Dr. Sarah Lin, tell us\u2014how does your carbon\u2011aware neural reasoning translate into kilowatt\u2011hour savings per model run?",
+    "thinking": "1. Guest Intent & Core Claim: Dr. Lin will argue that carbon\u2011aware neural reasoning cuts emissions by optimizing compute pathways.  \n2. Sustainability Hook: Direct link between AI inference energy (kWh) and clean\u2011grid utilization.  \n3. Conversational Volley: Mirror \u201ccarbon\u2011aware\u201d and probe concrete kWh savings per model run.  \n4. Cadence Check: 2 sentences, 39 words, under 45\u2011word limit.",
+    "rating": -1,
+    "tags": [
+      "off_track"
+    ],
+    "comment": "Off-topic",
+    "topic": "Decarbonizing AI: Clean Grids, Efficient Silicon & Sustainable Computing"
+  },
+  {
+    "id": "fb_20260908_165321_889137",
+    "timestamp": "2026-09-08T16:53:21.889173Z",
+    "guest_query": "What is the training footprint?",
+    "host_response": "AI models consume vast megawatts...",
+    "thinking": "",
+    "rating": -1,
+    "tags": [
+      "off_track",
+      "too_lengthy"
+    ],
+    "comment": "Felt robotic and too long",
+    "topic": "AI & Sustainability"
+  },
+  {
+    "id": "fb_host_turn_1788885545243",
+    "timestamp": "2026-09-08T16:39:38.710Z",
+    "guest_query": "Host Podcast Opening Question",
+    "host_response": "Welcome to the Global AI & Sustainability Summit 2026! Today we dive into decarbonizing AI\u2014clean grids, efficient silicon, sustainable compute. Dr. Sarah Lin, your carbon\u2011aware neural reasoning claims a 30% PUE drop; how do you achieve that in practice?",
+    "thinking": "1. Guest Intent: Dr. Lin will likely discuss her carbon\u2011aware neural reasoning framework and its impact on datacenter PUE. \n2. Sustainability Hook: Direct link to measurable PUE reduction and clean\u2011grid interaction. \n3. Conversational Volley: Warm welcome, acknowledge her claim, then probe the practical mechanisms. \n4. Cadence Check: Two sentences, ~40 words, under 45-word limit.",
+    "rating": -1,
+    "tags": [
+      "off_topic"
+    ],
+    "comment": "Off-topic",
+    "topic": "Decarbonizing AI: Clean Grids, Efficient Silicon & Sustainable Computing"
+  },
+  {
+    "id": "fb_20260908_163554_430105",
+    "timestamp": "2026-09-08T16:35:54.430241Z",
+    "guest_query": "test query",
+    "host_response": "test response",
+    "thinking": "",
+    "rating": 1,
+    "tags": [
+      "great_flow"
+    ],
+    "comment": "test",
+    "topic": "AI & Sustainability"
+  },
+  {
+    "id": "fb_seed_01",
+    "timestamp": "2026-09-08T18:30:00Z",
+    "guest_query": "We are trying to reduce training compute by 40% using sparse mixture of experts.",
+    "host_response": "That 40% reduction is huge, Sarah. But when those dormant experts get called during spike traffic, what happens to your peak grid draw?",
+    "thinking": "1. Intent: Guest highlighted MoE efficiency.\n2. Sustainability: Sparse models cut FLOPs but can cause bursty power draws.\n3. Volley: Acknowledge the 40% win, probe peak power surge.\n4. Cadence: 30 words, punchy podcast volley.",
+    "rating": 1,
+    "tags": [
+      "great_flow",
+      "punchy",
+      "relevant_question"
+    ],
+    "comment": "Perfect conversational rhythm\u2014felt like a real podcast volley!",
+    "topic": "AI & Sustainability"
+  },
+  {
+    "id": "fb_seed_02",
+    "timestamp": "2026-09-08T18:45:00Z",
+    "guest_query": "Water cooling in desert datacenters is becoming politically unacceptable.",
+    "host_response": "I completely agree. Water evaporation in drought zones is a PR and ecological nightmare. Are immersion dielectric fluids actually scalable for your clusters today, or still a pilot?",
+    "thinking": "1. Intent: Guest voiced concern over datacenter water usage.\n2. Sustainability: Evaporative cooling vs closed-loop immersion cooling.\n3. Volley: Validate ecological nightmare, ask about immersion scalability.\n4. Cadence: 33 words, active listening.",
+    "rating": 1,
+    "tags": [
+      "active_listening",
+      "spot_on"
+    ],
+    "comment": "Direct and human-like.",
+    "topic": "AI & Sustainability"
+  },
+  {
+    "id": "fb_seed_03",
+    "timestamp": "2026-09-08T19:00:00Z",
+    "guest_query": "How do you define green computing?",
+    "host_response": "Green computing is the environmentally responsible and eco-friendly use of computers and resources. In recent years, researchers have focused on three pillars: hardware efficiency, algorithmic optimization, and renewable sourcing.",
+    "thinking": "1. Intent: Definition query.\n2. Volley: Gave textbook multi-point answer.",
+    "rating": -1,
+    "tags": [
+      "too_long",
+      "lecture_tone",
+      "felt_like_qa"
+    ],
+    "comment": "Too textbook! Don't define it like Wikipedia\u2014react with how it matters to our panel.",
+    "topic": "AI & Sustainability"
+  }
+]

@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+edge-tts
+ollama
+pydantic
+python-multipart
+groq
+python-dotenv
