@@ -197,10 +197,11 @@ async def chat_endpoint(req: ChatRequest):
     # 3. Call LLM (Groq) with server-side API key
     groq_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_key:
-        # Fallback text response when key is unconfigured
-        fallback_answer = f"According to Next Wave Summit records:\n\n{context}\n\nFor more details, check with the organising team."
+        # Clean fallback: extract first clean paragraph from top match
+        first_text = matches[0]["text"] if (matches := search_knowledge_base(user_query, top_k=1)) else context
+        clean_fallback = re.sub(r'\[\d+\]', '', first_text).strip()
         return {
-            "response": fallback_answer,
+            "response": f"{clean_fallback}\n\nFor more details, please check with the Next Wave Summit organising team.",
             "citations": citations,
             "has_knowledge": True
         }
@@ -210,17 +211,37 @@ async def chat_endpoint(req: ChatRequest):
         prompt_template = JOY_INTERVIEW_PROMPT if req.mode == "interview" else JOY_SUMMIT_PROMPT
         system_prompt = prompt_template.format(context=context)
 
-        completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_query}
-            ],
-            temperature=0.3,
-            max_tokens=300
-        )
+        # Try available models in order of preference
+        model_fallbacks = [
+            "openai/gpt-oss-120b",
+            "llama3-70b-8192",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it"
+        ]
 
-        response_text = completion.choices[0].message.content.strip()
+        response_text = None
+        last_error = None
+        for model_name in model_fallbacks:
+            try:
+                completion = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_query}
+                    ],
+                    temperature=0.3,
+                    max_tokens=300
+                )
+                response_text = completion.choices[0].message.content.strip()
+                break
+            except Exception as model_err:
+                last_error = model_err
+                print(f"Model {model_name} failed: {model_err}")
+                continue
+
+        if not response_text:
+            raise Exception(f"All models failed. Last error: {last_error}")
+
         # Clean out any <think> tags or raw markdown symbols for voice clarity
         response_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
         response_text = re.sub(r'[*#`]', '', response_text)
@@ -230,11 +251,14 @@ async def chat_endpoint(req: ChatRequest):
             "citations": citations,
             "has_knowledge": True
         }
+
     except Exception as e:
         print(f"LLM generation error: {e}")
-        # Graceful fallback to context excerpt
+        # Graceful fallback: show first clean chunk text rather than the raw numbered context
+        top_match_text = matches[0]["text"] if (matches := search_knowledge_base(user_query, top_k=1)) else ""
+        clean_text = top_match_text.strip() or "Please check with the Next Wave Summit organising team for details."
         return {
-            "response": f"Here is the confirmed detail from our summit records:\n{context}",
+            "response": clean_text,
             "citations": citations,
             "has_knowledge": True
         }
