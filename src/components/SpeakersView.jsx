@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, Search, ExternalLink, Calendar, BookOpen, AlertCircle, RefreshCw } from 'lucide-react';
+import { getApiUrl } from '../services/apiClient';
 
 export function SpeakersView({ onAskJoyAboutSpeaker }) {
   const [speakers, setSpeakers] = useState([]);
@@ -11,7 +12,7 @@ export function SpeakersView({ onAskJoyAboutSpeaker }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/speakers');
+      const res = await fetch(getApiUrl('/api/speakers'));
       if (res.ok) {
         const data = await res.json();
         setSpeakers(data);

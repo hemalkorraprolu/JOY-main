@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Volume2, VolumeX, Play, Pause, Square, Mic, MicOff, RefreshCw, AlertCircle, Sparkles, BookOpen } from 'lucide-react';
+import { getApiUrl } from '../services/apiClient';
 
 export function ConversationPanel({ activeTab = 'ask_joy', initialPrompt = '' }) {
   const [messages, setMessages] = useState([
@@ -58,7 +59,7 @@ export function ConversationPanel({ activeTab = 'ask_joy', initialPrompt = '' })
     setLoading(true);
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(getApiUrl('/api/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -106,7 +107,7 @@ export function ConversationPanel({ activeTab = 'ask_joy', initialPrompt = '' })
 
     setIsPlayingAudio(true);
     try {
-      const res = await fetch('/api/tts', {
+      const res = await fetch(getApiUrl('/api/tts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

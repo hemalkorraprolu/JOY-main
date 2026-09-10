@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Lock, Upload, FileText, UserPlus, ShieldCheck, Search, Trash2, Eye, EyeOff, CheckCircle, AlertTriangle, RefreshCw, Plus, Edit, X } from 'lucide-react';
+import { getApiUrl } from '../services/apiClient';
+
 
 export function KnowledgeStudio({ isOpen, onClose }) {
   // Auth state
@@ -63,7 +65,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
     e.preventDefault();
     setAuthError('');
     try {
-      const res = await fetch('/api/admin/login', {
+      const res = await fetch(getApiUrl('/api/admin/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: passwordInput })
@@ -85,7 +87,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
     if (!authenticated) return;
     setLoadingDocs(true);
     try {
-      const res = await fetch('/api/admin/knowledge', {
+      const res = await fetch(getApiUrl('/api/admin/knowledge'), {
         headers: { 'X-Organiser-Secret': secret }
       });
       if (res.ok) {
@@ -104,7 +106,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
     if (!authenticated) return;
     setLoadingSpeakers(true);
     try {
-      const res = await fetch('/api/admin/speakers', {
+      const res = await fetch(getApiUrl('/api/admin/speakers'), {
         headers: { 'X-Organiser-Secret': secret }
       });
       if (res.ok) {
@@ -122,7 +124,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
   const fetchVoiceConsentLogs = async () => {
     if (!authenticated) return;
     try {
-      const res = await fetch('/api/admin/voice-consent', {
+      const res = await fetch(getApiUrl('/api/admin/voice-consent'), {
         headers: { 'X-Organiser-Secret': secret }
       });
       if (res.ok) {
@@ -168,7 +170,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
     if (selectedFile) formData.append('file', selectedFile);
 
     try {
-      const res = await fetch('/api/admin/knowledge/upload', {
+      const res = await fetch(getApiUrl('/api/admin/knowledge/upload'), {
         method: 'POST',
         headers: { 'X-Organiser-Secret': secret },
         body: formData
@@ -194,7 +196,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
   // Toggle Publish
   const handleTogglePublish = async (doc) => {
     try {
-      const res = await fetch(`/api/admin/knowledge/${doc.id}`, {
+      const res = await fetch(getApiUrl(`/api/admin/knowledge/${doc.id}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -212,7 +214,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
   const handleDeleteDoc = async (docId) => {
     if (!window.confirm('Delete this knowledge document and all indexed chunks?')) return;
     try {
-      const res = await fetch(`/api/admin/knowledge/${docId}`, {
+      const res = await fetch(getApiUrl(`/api/admin/knowledge/${docId}`), {
         method: 'DELETE',
         headers: { 'X-Organiser-Secret': secret }
       });
@@ -228,7 +230,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
     if (!speakerForm.full_name.trim()) return;
 
     try {
-      const res = await fetch('/api/admin/speakers', {
+      const res = await fetch(getApiUrl('/api/admin/speakers'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -262,7 +264,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
   const handleDeleteSpeaker = async (spkId) => {
     if (!window.confirm('Delete this speaker profile?')) return;
     try {
-      const res = await fetch(`/api/admin/speakers/${spkId}`, {
+      const res = await fetch(getApiUrl(`/api/admin/speakers/${spkId}`), {
         method: 'DELETE',
         headers: { 'X-Organiser-Secret': secret }
       });
@@ -278,7 +280,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
     if (!consentSpeakerId || !consentName || !consentChecked) return;
 
     try {
-      const res = await fetch('/api/admin/voice-consent', {
+      const res = await fetch(getApiUrl('/api/admin/voice-consent'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -310,7 +312,7 @@ export function KnowledgeStudio({ isOpen, onClose }) {
     try {
       const formData = new FormData();
       formData.append('query', testQuery);
-      const res = await fetch('/api/admin/rag-test', {
+      const res = await fetch(getApiUrl('/api/admin/rag-test'), {
         method: 'POST',
         headers: { 'X-Organiser-Secret': secret },
         body: formData

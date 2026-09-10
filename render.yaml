@@ -8,3 +8,9 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
+      - key: ORGANISER_SECRET
+        value: nextwave2026
+      - key: INDIC_F5_TTS_URL
+        value: ""
+      - key: OPENVOICE_URL
+        value: ""
