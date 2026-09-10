@@ -3,10 +3,12 @@
  * and Web Audio API Visualizer frequency analyzer.
  */
 
+import { getApiUrl } from './apiClient';
+
 export class AudioEngine {
   constructor() {
     this.recognition = null;
-    this.synthesis = window.speechSynthesis;
+    this.synthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
     this.audioContext = null;
     this.analyser = null;
     this.mediaStream = null;
@@ -14,12 +16,14 @@ export class AudioEngine {
     this.isSpeaking = false;
     this.voices = [];
     this.selectedVoice = null;
+    this.currentAudio = null;
 
     this._initSpeechRecognition();
     this._initSpeechSynthesis();
   }
 
   _initSpeechRecognition() {
+    if (typeof window === 'undefined') return;
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       this.recognition = new SpeechRecognition();
@@ -36,7 +40,6 @@ export class AudioEngine {
 
     const loadVoices = () => {
       this.voices = this.synthesis.getVoices();
-      // Prefer feminine english voices for JOY
       this.selectedVoice = this.voices.find(v =>
         v.lang.startsWith("en") &&
         (v.name.includes("Samantha") || v.name.includes("Karen") || v.name.includes("Zira") ||
@@ -54,34 +57,27 @@ export class AudioEngine {
     }
   }
 
-  /**
-   * Returns the current AnalyserNode for waveform visualization.
-   * May be null if mic hasn't been activated yet.
-   */
   getAnalyserNode() {
     return this.analyser;
   }
 
-  /**
-   * Ensures an AudioContext and AnalyserNode exist (reuses if already created).
-   */
   _ensureAudioContext() {
+    if (typeof window === 'undefined') return;
     if (this.audioContext && this.audioContext.state !== 'closed') {
       return;
     }
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    this.audioContext = new AudioCtx();
-    this.analyser = this.audioContext.createAnalyser();
-    this.analyser.fftSize = 64;
-    this.analyser.smoothingTimeConstant = 0.8;
+    if (AudioCtx) {
+      this.audioContext = new AudioCtx();
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 64;
+      this.analyser.smoothingTimeConstant = 0.8;
+    }
   }
 
-  /**
-   * Start listening to guest via microphone
-   */
   startListening({ onTranscript, onError, onEnd }) {
     if (!this.recognition) {
-      if (onError) onError("Speech Recognition not supported in this browser. Please use Google Chrome or Edge.");
+      if (onError) onError("Speech Recognition not supported in this browser. Please use Chrome or Edge.");
       return;
     }
 
@@ -115,7 +111,6 @@ export class AudioEngine {
     };
 
     this.recognition.onend = () => {
-      // Auto-restart if user still wants to listen
       if (this.isListening) {
         try {
           this.recognition.start();
@@ -146,13 +141,10 @@ export class AudioEngine {
     this.stopMicVisualizer();
   }
 
-  /**
-   * Unlock AudioContext and SpeechSynthesis on first user gesture.
-   */
   unlockAudioContext() {
-    if (this.synthesis && this.synthesis.paused) {
+    if (this.synthesis) {
       try {
-        this.synthesis.resume();
+        if (this.synthesis.paused) this.synthesis.resume();
       } catch (e) {}
     }
     this._ensureAudioContext();
@@ -164,17 +156,12 @@ export class AudioEngine {
   }
 
   /**
-   * Speaks podcast response out loud with Edge-TTS backend neural voice
-   * or persona-aware Web Speech fallback.
-   *
-   * @param {string} text - Text to speak
-   * @param {object} options - { pitch, rate, voiceName, onStart, onEnd, onError }
+   * Speaks text out loud using backend neural TTS or Web Speech fallback.
    */
   async speakText(text, { pitch = 1.0, rate = 1.0, voiceName = "en-US-AvaNeural", onStart, onEnd, onError } = {}) {
     this.unlockAudioContext();
     this.stopSpeaking();
 
-    // Clean text of markdown/tags if any remain
     const cleanText = text
       .replace(/<think>[\s\S]*?<\/think>/gi, "")
       .replace(/[*_#`~]/g, "")
@@ -186,16 +173,17 @@ export class AudioEngine {
       return;
     }
 
-    // Attempt 1: Try Neural Edge-TTS via backend API
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+    // 1. Try Backend Neural TTS Endpoint
     try {
-      const formData = new FormData();
-      formData.append("text", cleanText);
-      formData.append("voice", voiceName || "en-US-AvaNeural");
-
-      const response = await fetch(`${backendUrl}/api/tts`, {
+      const ttsUrl = getApiUrl('/api/tts');
+      const response = await fetch(ttsUrl, {
         method: "POST",
-        body: formData
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: cleanText,
+          voice_engine: "neutral",
+          language: "en"
+        })
       });
 
       if (response.ok) {
@@ -218,21 +206,30 @@ export class AudioEngine {
         };
 
         audio.onerror = (err) => {
-          console.warn("Edge-TTS Audio playback error, using Web Speech fallback:", err);
+          console.warn("Backend TTS playback error, trying Web Speech fallback:", err);
           this.isSpeaking = false;
           this.currentAudio = null;
           URL.revokeObjectURL(audioUrl);
           this._speakWebSpeechFallback(cleanText, { pitch, rate, onStart, onEnd, onError });
         };
 
-        await audio.play();
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(err => {
+            console.warn("Browser prevented autoplay, falling back to Web Speech:", err);
+            this.isSpeaking = false;
+            this.currentAudio = null;
+            URL.revokeObjectURL(audioUrl);
+            this._speakWebSpeechFallback(cleanText, { pitch, rate, onStart, onEnd, onError });
+          });
+        }
         return;
       }
     } catch (err) {
-      console.warn("Backend TTS endpoint unreachable, falling back to Web Speech:", err);
+      console.warn("Backend TTS call failed, falling back to Web Speech:", err);
     }
 
-    // Fallback: Web Speech API
+    // 2. Web Speech API Fallback
     this._speakWebSpeechFallback(cleanText, { pitch, rate, onStart, onEnd, onError });
   }
 
@@ -250,7 +247,6 @@ export class AudioEngine {
       }
     } catch (e) {}
 
-    // Ensure voice is selected if loaded late
     if (!this.selectedVoice && this.voices.length > 0) {
       this.selectedVoice = this.voices.find(v => v.lang.startsWith("en")) || this.voices[0];
     }
@@ -259,7 +255,7 @@ export class AudioEngine {
     if (this.selectedVoice) {
       utterance.voice = this.selectedVoice;
     }
-    utterance.volume = 1.0; // Ensure maximum audible volume
+    utterance.volume = 1.0;
     utterance.pitch = pitch;
     utterance.rate = rate;
 
@@ -299,20 +295,17 @@ export class AudioEngine {
     this.isSpeaking = false;
   }
 
-  /**
-   * Web Audio API Microphone Visualizer.
-   * Reuses existing AudioContext if available.
-   */
   async startMicVisualizer() {
     try {
-      if (!this.mediaStream) {
+      if (!this.mediaStream && navigator.mediaDevices) {
         this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       }
 
       this._ensureAudioContext();
-
-      const source = this.audioContext.createMediaStreamSource(this.mediaStream);
-      source.connect(this.analyser);
+      if (this.audioContext && this.mediaStream) {
+        const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+        source.connect(this.analyser);
+      }
     } catch (e) {
       console.warn("Mic visualizer unavailable:", e);
     }
@@ -323,12 +316,8 @@ export class AudioEngine {
       this.mediaStream.getTracks().forEach(track => track.stop());
       this.mediaStream = null;
     }
-    // Don't close AudioContext here — it can be reused
   }
 
-  /**
-   * Full cleanup — call on unmount.
-   */
   destroy() {
     this.stopListening();
     this.stopSpeaking();
@@ -340,4 +329,3 @@ export class AudioEngine {
     }
   }
 }
-

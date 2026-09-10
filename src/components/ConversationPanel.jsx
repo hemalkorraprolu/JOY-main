@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, X, Brain, Sparkles, ThumbsUp, ThumbsDown, Check, Send, Mic, MicOff, BookOpen } from 'lucide-react';
+import { MessageSquare, X, Brain, Sparkles, ThumbsUp, ThumbsDown, Check, Send, Mic, MicOff, BookOpen, Volume2 } from 'lucide-react';
 
 /**
  * ConversationPanel — Floating glass panel for live text chat and voice transcript.
@@ -14,6 +14,7 @@ import { MessageSquare, X, Brain, Sparkles, ThumbsUp, ThumbsDown, Check, Send, M
  *  - onFeedback: (turnId, rating, tags, comment) => void
  *  - onSendMessage: (text: string) => void
  *  - onToggleMic: () => void
+ *  - onReplayVoice: (text: string) => void
  */
 export function ConversationPanel({
   isOpen,
@@ -23,7 +24,8 @@ export function ConversationPanel({
   stageStatus = 'idle',
   onFeedback,
   onSendMessage,
-  onToggleMic
+  onToggleMic,
+  onReplayVoice
 }) {
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
@@ -192,7 +194,31 @@ export function ConversationPanel({
                       </span>
                     </div>
 
-                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{msg.time}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {msg.sender === 'host' && onReplayVoice && (
+                        <button
+                          type="button"
+                          onClick={() => onReplayVoice(msg.text)}
+                          style={{
+                            background: 'rgba(16, 185, 129, 0.15)',
+                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                            color: '#34d399',
+                            borderRadius: '4px',
+                            padding: '2px 6px',
+                            fontSize: '0.7rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          title="Listen to audio speech"
+                        >
+                          <Volume2 size={12} />
+                          <span>Listen</span>
+                        </button>
+                      )}
+                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{msg.time}</span>
+                    </div>
                   </div>
 
                   <p className="conv-message__text" style={{

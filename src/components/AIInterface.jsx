@@ -265,6 +265,20 @@ export function AIInterface() {
     setInterimText('');
   };
 
+  const handleReplayVoice = (text) => {
+    if (audioRef.current && text) {
+      audioRef.current.unlockAudioContext();
+      audioRef.current.stopSpeaking();
+      setStageStatus('speaking_host');
+      audioRef.current.speakText(text, {
+        pitch: hostPersona.pitch,
+        rate: hostPersona.rate,
+        voiceName: hostPersona.voice || "en-US-AvaNeural",
+        onEnd: () => setStageStatus('idle')
+      });
+    }
+  };
+
   return (
     <div className="ai-interface">
       <StarField />
@@ -330,6 +344,7 @@ export function AIInterface() {
           onFeedback={handleFeedbackSubmit}
           onSendMessage={handleSendMessage}
           onToggleMic={handleToggleListening}
+          onReplayVoice={handleReplayVoice}
         />
 
         <MemoryPanel
