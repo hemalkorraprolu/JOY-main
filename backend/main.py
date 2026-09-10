@@ -176,40 +176,43 @@ async def chat_endpoint(req: ChatRequest):
     target_mode = "speakers" if req.mode == "speakers" else "all"
     context, citations, has_sufficient_context = build_rag_context_and_citations(user_query, target_mode=target_mode)
 
-    # 2. Enforce zero-hallucination policy if query is about event facts/speakers but context missing
-    if not has_sufficient_context:
-        # Check if query is generic greeting e.g. "hi", "hello"
-        clean_q = re.sub(r'[^\w\s]', '', user_query.lower()).strip()
-        if clean_q in ["hi", "hello", "hey", "greetings", "good morning", "good afternoon"]:
-            welcome_msg = "Hello! Welcome to Next Wave Summit. I'm Joy, your official AI assistant. How can I help you with our schedule, speakers, venue, or sessions today?"
-            return {
-                "response": welcome_msg,
-                "citations": [],
-                "has_knowledge": True
-            }
-        
+    # 2. Check for general greetings or general event questions if RAG context is sparse
+    clean_q = re.sub(r'[^\w\s]', '', user_query.lower()).strip()
+    is_greeting = any(g in clean_q for g in ["hi", "hello", "hey", "greetings", "good morning", "good afternoon", "who are you", "what can you do", "about yourself", "what is next wave"])
+
+    if not has_sufficient_context and is_greeting:
+        welcome_msg = "Hello! Welcome to Next Wave Summit. I'm Joy, your official AI assistant. I can guide you through confirmed keynote speakers, schedule details, session tracks, and sustainable computing research. How can I help you today?"
         return {
-            "response": MISSING_KNOWLEDGE_RESPONSE,
+            "response": welcome_msg,
             "citations": [],
-            "has_knowledge": False
+            "has_knowledge": True
         }
 
     # 3. Call LLM (Groq) with server-side API key
     groq_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_key:
-        # Clean fallback: extract first clean paragraph from top match
-        first_text = matches[0]["text"] if (matches := search_knowledge_base(user_query, top_k=1)) else context
-        clean_fallback = re.sub(r'\[\d+\]', '', first_text).strip()
-        return {
-            "response": f"{clean_fallback}\n\nFor more details, please check with the Next Wave Summit organising team.",
-            "citations": citations,
-            "has_knowledge": True
-        }
+        if has_sufficient_context:
+            first_text = matches[0]["text"] if (matches := search_knowledge_base(user_query, top_k=1)) else context
+            clean_fallback = re.sub(r'\[\d+\]', '', first_text).strip()
+            return {
+                "response": f"{clean_fallback}\n\nFor more details, please check with the Next Wave Summit organising team.",
+                "citations": citations,
+                "has_knowledge": True
+            }
+        else:
+            return {
+                "response": MISSING_KNOWLEDGE_RESPONSE,
+                "citations": [],
+                "has_knowledge": False
+            }
 
     try:
         client = Groq(api_key=groq_key)
         prompt_template = JOY_INTERVIEW_PROMPT if req.mode == "interview" else JOY_SUMMIT_PROMPT
-        system_prompt = prompt_template.format(context=context)
+        
+        # Inject RAG context if present, or general Next Wave Summit background
+        effective_context = context if has_sufficient_context else "Next Wave Summit 2026 is a global conference on AI innovation, sustainable computing, decarbonizing neural workloads, and green silicon."
+        system_prompt = prompt_template.format(context=effective_context)
 
         # Try available models in order of preference
         model_fallbacks = [
@@ -248,13 +251,12 @@ async def chat_endpoint(req: ChatRequest):
 
         return {
             "response": response_text,
-            "citations": citations,
+            "citations": citations if has_sufficient_context else [],
             "has_knowledge": True
         }
 
     except Exception as e:
         print(f"LLM generation error: {e}")
-        # Graceful fallback: show first clean chunk text rather than the raw numbered context
         top_match_text = matches[0]["text"] if (matches := search_knowledge_base(user_query, top_k=1)) else ""
         clean_text = top_match_text.strip() or "Please check with the Next Wave Summit organising team for details."
         return {
@@ -262,6 +264,32 @@ async def chat_endpoint(req: ChatRequest):
             "citations": citations,
             "has_knowledge": True
         }
+
+
+@app.post("/api/proxy-chat")
+async def proxy_chat_endpoint(body: Dict[str, Any]):
+    """Proxy chat alias for backward compatibility with frontend agent calls."""
+    messages = body.get("messages", [])
+    user_msg = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            user_msg = m.get("content", "")
+            break
+    
+    req = ChatRequest(message=user_msg, mode="interview")
+    res = await chat_endpoint(req)
+    
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": f"<think>\n1. RAG query processed.\n</think>\n{res['response']}"
+                }
+            }
+        ]
+    }
+
 
 
 # --- Server-Side TTS Route ---

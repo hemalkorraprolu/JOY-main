@@ -1,14 +1,15 @@
 /**
- * AI Voice Podcaster Agent Service - JOY (RAG Powered, Multi-Guest, Multi-Persona)
+ * AI Voice Podcaster Agent Service - JOY (RAG Powered, Next Wave Summit AI Assistant)
  *
  * Features:
  *  - RAG Knowledge Base indexing with per-guest document tagging
  *  - Multi-guest context tracking and active speaker identification
  *  - Multi-persona host system prompts (Alex, Elena, Marcus)
- *  - Intent analysis, zero repetition, and dynamic question synthesis
+ *  - Direct integration with backend /api/chat RAG & Groq fallback chain
  */
 
 import { HOST_PERSONAS } from '../components/PersonaBadge';
+import { getApiUrl } from './apiClient';
 
 export class RAGKnowledgeBase {
   constructor() {
@@ -73,36 +74,25 @@ export class RAGKnowledgeBase {
 
 export class AIPodcasterAgent {
   constructor(config = {}) {
-    this.conferenceName = config.conferenceName || "Global AI & Sustainability Summit 2026";
+    this.conferenceName = config.conferenceName || "Next Wave Summit";
     this.topic = config.topic || "Decarbonizing AI: Clean Grids, Efficient Silicon & Sustainable Computing";
 
-    // Multi-guest support
     this.guests = config.guests || [];
-
-    // Host persona
     this.hostPersonaId = config.hostPersonaId || 'alex';
 
     this.ragKB = new RAGKnowledgeBase();
     this.history = [];
     this.usedTemplates = new Set();
 
-    // Check localStorage for saved key
     const savedGroqKey = typeof localStorage !== 'undefined' ? localStorage.getItem('joy_groq_api_key') : null;
     const activeKey = config.groqApiKey || savedGroqKey || import.meta.env.VITE_GROQ_API_KEY || "";
     
-    // Clean key string if placeholder
     this.groqApiKey = (activeKey && !activeKey.includes('your_api_key')) ? activeKey : "";
-    this.engine = config.engine || (this.groqApiKey ? "groq" : "groq");
-    this.ollamaModel = config.ollamaModel || "llama3.2";
-    this.ollamaUrl = config.ollamaUrl || "http://localhost:11434";
+    this.engine = config.engine || "groq";
 
-    // Index initial guest bios
     this._indexGuestBios();
   }
 
-  /**
-   * Index all guest bios into the RAG knowledge base.
-   */
   _indexGuestBios() {
     this.guests.forEach(guest => {
       if (guest.bio) {
@@ -111,7 +101,7 @@ export class AIPodcasterAgent {
     });
   }
 
-  setEngineConfig({ engine, groqApiKey, ollamaModel, ollamaUrl, topic, conferenceName }) {
+  setEngineConfig({ engine, groqApiKey, topic, conferenceName }) {
     if (engine) this.engine = engine;
     if (groqApiKey !== undefined) {
       this.groqApiKey = groqApiKey;
@@ -119,20 +109,14 @@ export class AIPodcasterAgent {
         localStorage.setItem('joy_groq_api_key', groqApiKey);
       }
     }
-    if (ollamaModel) this.ollamaModel = ollamaModel;
-    if (ollamaUrl) this.ollamaUrl = ollamaUrl;
     if (topic) this.topic = topic;
     if (conferenceName) this.conferenceName = conferenceName;
   }
 
-  /**
-   * Update guests list and index any new bios.
-   */
   setGuests(guests) {
     const newGuests = guests.filter(g => !this.guests.find(og => og.id === g.id));
     this.guests = guests;
 
-    // Index bios for newly added guests
     newGuests.forEach(guest => {
       if (guest.bio) {
         this.ragKB.addDocument(`${guest.name} Bio`, guest.bio, { guestId: guest.id });
@@ -144,324 +128,131 @@ export class AIPodcasterAgent {
     this.hostPersonaId = personaId;
   }
 
-  /**
-   * Upload a knowledge document, optionally tagged to a specific guest.
-   */
   uploadKnowledgeDocument(sourceTitle, textContent, guestId = null) {
     this.ragKB.addDocument(sourceTitle, textContent, { guestId });
   }
 
-  /**
-   * Get the active host persona config.
-   */
   _getPersona() {
     return HOST_PERSONAS[this.hostPersonaId] || HOST_PERSONAS.alex;
   }
 
-  /**
-   * Build the guest context string for system prompts.
-   */
-  _buildGuestContext() {
-    if (this.guests.length === 0) return "Open floor for guest speakers, student researchers, and event attendees.";
-
-    return this.guests.map(g =>
-      `- ${g.name} (${g.role})${g.bio ? ': ' + g.bio.substring(0, 120) : ''}`
-    ).join('\n');
-  }
-
-  /**
-   * Get guest by ID.
-   */
-  _getGuest(guestId) {
-    return this.guests.find(g => g.id === guestId);
-  }
-
-  /**
-   * Build the system prompt incorporating persona, podcast conversation rules, and guest context.
-   */
-  _buildSystemPrompt(additionalContext = '') {
-    const persona = this._getPersona();
-    const guestContext = this._buildGuestContext();
-
-    return `You are JOY, an authentic, human-like AI podcast co-host at ${this.conferenceName}.
-Topic Context: ${this.topic}
-
-${persona.systemPromptFlavor}
-
-EVENT AUDIENCE & PARTICIPANTS:
-${guestContext}
-Speakers can be guest experts, student researchers, or audience members asking questions at Next Wave.
-
-${additionalContext ? `ADDITIONAL CONTEXT:\n${additionalContext}\n` : ''}
-CORE PODCAST CONVERSATION RULES (NEVER SOUND LIKE A CHATBOT):
-1. LISTEN & RESPOND TO SPEAKER FIRST: Directly address whatever the speaker or student just introduced.
-2. CONVERSATIONAL BREVITY: Keep your spoken response strictly between 20 and 45 words (1 to 2 sentences max). NEVER deliver a monologue or lecture.
-3. ACTIVE LISTENING & MIRRORING: Immediately acknowledge or mirror one specific phrase or concept the speaker said.
-4. CONVERSATIONAL VOLLEY: Offer a brief 1-sentence reaction, then volley the mic back with an open follow-up question.
-5. NO CHATBOT TROPES: Strictly NO bullet points, numbered lists, textbook definitions, or robotic pleasantries ("Thank you for that response", "As an AI model").
-6. TOPIC CONTINUITY & FLEXIBILITY: Stay 100% focused on whatever topic or track the speaker brings up. Directly address their new points and follow their lead without forcing unrelated pivots.
-7. VOICE-READY DIALOGUE: Write clean, spoken text without markdown symbols (*, #, \`).
-
-FORMAT REQUIRED:
-<think>
-1. Speaker Intent & Core Claim: [What did the speaker/student assert or ask?]
-2. Topic Hook: [What specific angle connects to what the speaker just said?]
-3. Conversational Volley: [Why this brief reflection and open follow-up?]
-4. Cadence Check: [Verify response is 1-2 punchy spoken sentences, under 45 words]
-</think>
-[JOY's spoken podcast response]`;
-  }
-
   async generateOpening(guestId = null) {
-    const activeGuest = (guestId ? this._getGuest(guestId) : null) || this.guests[0];
-    const guestName = activeGuest ? activeGuest.name : 'our guest';
-    const guestRole = activeGuest ? activeGuest.role : '';
-    const guestBio = activeGuest ? activeGuest.bio : '';
+    const activeGuest = (guestId ? this.guests.find(g => g.id === guestId) : null) || this.guests[0];
+    const guestName = activeGuest ? activeGuest.name : '';
 
-    let defaultOpeningText = `Welcome to Next Wave! I'm JOY, your AI podcast host. Today we're exploring ${this.topic} with ${guestName}. ${guestName}, what is the main breakthrough or challenge shaping your current work in sustainable compute?`;
-
-    if (guestName.includes('Sarah Lin')) {
-      defaultOpeningText = `Welcome to Next Wave! I'm JOY, your AI podcast host. Today we're exploring AI innovations and green computing with Dr. Sarah Lin. Sarah, your research focuses on carbon-aware neural reasoning—what key breakthrough allowed your team to cut LLM training energy consumption so significantly?`;
-    } else if (guestName.includes('Marcus Vance')) {
-      defaultOpeningText = `Welcome to Next Wave! I'm JOY, your AI podcast host. Today we're diving into green compute systems with Prof. Marcus Vance. Marcus, your work focuses on dynamic renewable load-shifting for AI clusters—what is the biggest hurdle to scaling zero-carbon datacenters today?`;
-    }
-
-    const defaultOpening = {
-      thinking: `1. Intent: Podcast Opening & Guest Welcome.\n2. Guest Context: ${guestName}${guestRole ? ' (' + guestRole + ')' : ''}.\n3. Action: Introduce conference topic (${this.topic}) & launch sharp opening question.\n4. Cadence: Warm, broadcast-ready AI podcast co-host.`,
-      spokenResponse: defaultOpeningText
-    };
+    let defaultOpeningText = `Welcome to Next Wave Summit! I'm Joy, your official AI assistant. Today we're exploring ${this.topic}. How can I assist you with keynotes, speakers, or session tracks today?`;
 
     try {
-      const prompt = `Generate a broadcast-ready 2-sentence podcast host opening for ${this.conferenceName} on topic "${this.topic}".
-Featured Guest: ${guestName} ${guestRole ? `(${guestRole})` : ''}. ${guestBio ? `Bio summary: ${guestBio.substring(0, 150)}` : ''}
+      const chatUrl = getApiUrl('/api/chat');
+      const res = await fetch(chatUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: guestName ? `Generate a warm 2-sentence opening for speaker ${guestName}` : `Welcome attendees to Next Wave Summit`,
+          mode: "interview"
+        })
+      });
 
-INSTRUCTIONS:
-1. Welcome the audience to ${this.conferenceName} and introduce guest ${guestName}.
-2. Citing their area of research or role, ask ${guestName} a compelling, thought-provoking opening question to kick off the interview.
-3. Keep response strictly under 40 words (2 punchy sentences). DO NOT ask generic questions like 'feel free to ask doubts'. Act like a real podcast host!`;
-
-      const res = await this._processLLMRequest([
-        { role: "system", content: this._buildSystemPrompt() },
-        { role: "user", content: prompt }
-      ]);
-      if (res && res.spokenResponse && res.spokenResponse.length > 20 && !res.spokenResponse.includes("thinkthink") && !res.spokenResponse.includes("reasoning steps")) {
-        return res;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.response && data.response.length > 15) {
+          return {
+            thinking: `1. Intent: Event Opening & Welcome.\n2. Persona: ${this._getPersona().name}.\n3. Action: Greet attendees and launch topic context (${this.topic}).`,
+            spokenResponse: data.response,
+            citations: data.citations || []
+          };
+        }
       }
     } catch (err) {
-      console.warn("Error generating opening LLM call:", err);
+      console.warn("Backend chat API error during intro generation:", err);
     }
 
-    return defaultOpening;
+    return {
+      thinking: `1. Intent: Default Event Welcome.\n2. Action: Greet attendee at Next Wave Summit.`,
+      spokenResponse: defaultOpeningText,
+      citations: []
+    };
   }
 
-  /**
-   * Process a guest's spoken statement and generate JOY's response.
-   *
-   * @param {string} guestStatement — what the guest said
-   * @param {string} guestId — ID of the speaking guest
-   */
   async respondToGuest(guestStatement, guestId = null) {
-    const guest = guestId ? this._getGuest(guestId) : null;
-    const guestName = guest ? guest.name : 'Guest';
+    const guest = guestId ? this.guests.find(g => g.id === guestId) : null;
+    const guestName = guest ? guest.name : 'User';
 
     this.history.push({ role: "guest", content: guestStatement, guestName });
 
     const retrievedChunks = this.ragKB.search(guestStatement, 2);
-    this.ragKB.addDocument(`Turn_${this.history.length}`, guestStatement, {
-      isSpokenTurn: true,
-      guestId
-    });
 
-    const ragContext = retrievedChunks.length > 0
-      ? retrievedChunks.map(c => `[${c.source}]: ${c.text}`).join('; ')
-      : 'No matching documents found.';
+    try {
+      const chatUrl = getApiUrl('/api/chat');
+      const res = await fetch(chatUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: guestStatement,
+          mode: "interview"
+        })
+      });
 
-    const response = await this._processLLMRequest([
-      {
-        role: "system",
-        content: this._buildSystemPrompt(`RAG Retrieved Context: ${ragContext}`)
-      },
-      ...this.history.map(m => ({
-        role: m.role === 'guest' ? 'user' : 'assistant',
-        content: m.guestName
-          ? `[${m.guestName}]: ${m.content}`
-          : m.content
-      }))
-    ]);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.response) {
+          const thinking = `1. Intent Analysis: Speaker asked about "${guestStatement.substring(0, 45)}...".\n2. Grounding: RAG context applied.\n3. Volley: Synthesized conversational follow-up.`;
+          this.history.push({ role: "host", content: data.response });
 
-    this.history.push({ role: "host", content: response.spokenResponse });
+          return {
+            thinking,
+            spokenResponse: data.response,
+            citations: data.citations || [],
+            retrievedChunks
+          };
+        }
+      }
+    } catch (err) {
+      console.warn("Backend chat endpoint call failed, using dynamic fallback:", err);
+    }
+
+    const fallback = this._dynamicFallbackGenerator(guestStatement);
+    this.history.push({ role: "host", content: fallback.spokenResponse });
 
     return {
-      ...response,
+      ...fallback,
+      citations: [],
       retrievedChunks
     };
   }
 
-  async _processLLMRequest(messages) {
-    if (this.engine !== "ollama") {
-      try {
-        return await this._callGroqAPI(messages);
-      } catch (err) {
-        console.warn("Groq proxy failed, trying fallback:", err);
-      }
-    } else if (this.engine === "ollama") {
-      try {
-        return await this._callOllamaAPI(messages);
-      } catch (err) {
-        console.warn("Ollama failed:", err);
-      }
-    }
-
-    return this._dynamicFallbackGenerator(messages);
-  }
-
-  async _callGroqAPI(messages) {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
-    const res = await fetch(`${backendUrl}/api/proxy-chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        api_key: this.groqApiKey || undefined,
-        model: "qwen/qwen3.6-27b",
-        messages,
-        temperature: 0.7,
-        max_tokens: 800
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || `Proxy error: ${res.status}`);
-    }
-    const data = await res.json();
-    return this._parseThinkingAndResponse(data.choices?.[0]?.message?.content || "");
-  }
-
-  async _callOllamaAPI(messages) {
-    const res = await fetch(`${this.ollamaUrl}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.ollamaModel, messages, stream: false })
-    });
-    const data = await res.json();
-    return this._parseThinkingAndResponse(data.message?.content || "");
-  }
-
-  _dynamicFallbackGenerator(messages) {
-    const lastUserMessage = [...messages].reverse().find(m => m.role === "user")?.content || "";
-    // Strip tags, thinking blocks, guest prefixes, and system instruction leakage
-    const cleanMessage = lastUserMessage
-      .replace(/^\[.*?\]:\s*/, '')
-      .replace(/<think>[\s\S]*?<\/think>/gi, '')
-      .replace(/<\/?[^>]+(>|$)/g, '')
-      .replace(/include\s+<think>[\s\S]*/gi, '')
-      .replace(/reasoning\s+steps/gi, '')
-      .trim();
-
+  _dynamicFallbackGenerator(cleanMessage) {
     const lower = cleanMessage.toLowerCase();
-    const retrieved = this.ragKB.search(cleanMessage, 1);
-    const ragSnippet = retrieved.length > 0 ? retrieved[0] : null;
-
-    const nameMatch = lastUserMessage.match(/^\[(.*?)\]:/);
-    const speakerName = nameMatch ? nameMatch[1] : (this.guests[0]?.name || 'our guest');
-
     let thinking = "";
     let spokenResponse = "";
 
-    // 1. Self-introduction
-    if (lower.includes("about yourself") || lower.includes("who are you") || lower.includes("tell me about you") || lower.includes("what is your name") || lower.includes("who is joy") || lower.includes("what can you do")) {
-      thinking = `1. Intent: Asked for host & event intro.\n2. Action: Introduce JOY & podcast mission.\n3. Volley: Ask speaker about their key focus in sustainable AI.\n4. Cadence: Punchy human host.`;
-      spokenResponse = `Welcome to Next Wave! I'm JOY, your AI co-host. We're diving into decarbonizing AI and sustainable compute today. What's the main focus of your work in this space?`;
-    }
-    // 2. Mic / Audio check
-    else if (lower.includes("understand") || lower.includes("hear me") || lower.includes("testing") || lower.includes("hello hello") || lower.includes("can you hear")) {
-      thinking = `1. Intent: Audio verification.\n2. Action: Casual confirmation.\n3. Volley: Invite speaker to kick off their main thesis.`;
-      spokenResponse = `Loud and clear! Audio levels are spot-on. What's the core point or breakthrough you'd like to dive into today?`;
-    }
-    // 3. Greeting or Opening Welcome Fallback
-    else if (lower === "hello" || lower === "hi" || lower.includes("happy to be here") || lower.includes("thanks for having me") || lower.includes("welcome for next wave") || lower.includes("generate a brief") || lower.length === 0) {
-      thinking = `1. Intent: Friendly greeting / Event Opening.\n2. Action: Warm event intro.\n3. Volley: Launch opening interview question.\n4. Cadence: Warm podcast host.`;
-      spokenResponse = `Welcome to Next Wave! We're thrilled to have you on the show today. To kick off, what inspired your recent research in clean compute architectures?`;
-    }
-    // 4. Dynamic contextual response based on user's actual spoken text
-    else {
-      const stopWords = new Set(["the","a","an","is","are","was","were","in","on","at","to","for","of","with","and","or","it","that","this","i","you","we","they","my","your","about","how","what","why","where","when","can","do","does","did","generate","brief","warm","event","welcome","include","think","thinkthink","reasoning","steps"]);
-      const words = cleanMessage.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w.toLowerCase()));
-      const topicKeywords = words.length > 0 ? words.slice(-3).join(' ') : cleanMessage;
-
-      thinking = `1. Intent Analysis: ${speakerName} introduced "${cleanMessage.substring(0, 45)}...".\n2. Context Extraction: Focusing directly on ${topicKeywords}.\n3. Volley: Acknowledge their point directly and ask an open follow-up.\n4. Cadence Check: 1-2 punchy spoken sentences.`;
-
-      spokenResponse = ragSnippet
-        ? `That links directly to your research in ${ragSnippet.source}. Regarding ${topicKeywords}, how do you see that scaling in real-world deployments?`
-        : `That's a crucial point regarding ${topicKeywords}! What is the primary bottleneck or trade-off you face when putting that into production?`;
-    }
-
-    return { thinking, spokenResponse };
-  }
-
-
-  _parseThinkingAndResponse(rawText) {
-    let thinking = "";
-    let spokenResponse = rawText || "";
-
-    const thinkMatch = spokenResponse.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch) {
-      thinking = thinkMatch[1].trim();
-      spokenResponse = spokenResponse.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    if (lower.includes("about yourself") || lower.includes("who are you") || lower.includes("tell me about you") || lower.includes("who is joy") || lower.includes("what can you do")) {
+      thinking = `1. Intent: Host intro.\n2. Action: Introduce Joy for Next Wave Summit.`;
+      spokenResponse = `Welcome to Next Wave Summit! I'm Joy, your official AI assistant. I can guide you through confirmed speakers, schedule details, session topics, and sustainable AI research. What would you like to know?`;
+    } else if (lower.includes("speaker") || lower.includes("who is speaking") || lower.includes("keynote")) {
+      thinking = `1. Intent: Speaker query.\n2. Action: Provide speaker overview.`;
+      spokenResponse = `Next Wave Summit features world-class leaders in AI & Sustainability, including keynotes on carbon-aware neural computing and clean energy datacenters. Which speaker or topic would you like to explore?`;
+    } else if (lower.includes("hello") || lower.includes("hi") || lower.includes("hey")) {
+      thinking = `1. Intent: Friendly greeting.\n2. Action: Warm welcome.`;
+      spokenResponse = `Hello! Welcome to Next Wave Summit. How can I help you with our sessions, schedule, or speakers today?`;
     } else {
-      thinking = "1. Intent: Analyzing statement and active listening.\n2. Volley: Synthesizing conversational follow-up question.";
+      thinking = `1. Intent: General query.\n2. Action: Contextual answer for Next Wave Summit.`;
+      spokenResponse = `That's a great point regarding "${cleanMessage.substring(0, 50)}"! How can I help connect that to the sessions or research at Next Wave Summit?`;
     }
-
-    spokenResponse = spokenResponse
-      .replace(/<think>|<\/think>/gi, "")
-      .replace(/thinkthink\s+reasoning\s+steps/gi, "your question")
-      .replace(/^JOY:\s*/i, "")
-      .trim();
 
     return { thinking, spokenResponse };
   }
 
-  /**
-   * Submit human feedback on an AI response into the Feedback Loop.
-   */
   async submitFeedback(feedbackData) {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
     try {
-      const res = await fetch(`${backendUrl}/api/feedback`, {
+      const res = await fetch(getApiUrl('/api/feedback'), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(feedbackData)
       });
       return await res.json();
     } catch (err) {
-      console.warn("Feedback submission fallback:", err);
-      return null;
-    }
-  }
-
-  /**
-   * Fetch autonomous feedback loop summary and metrics.
-   */
-  async getFeedbackSummary() {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
-    try {
-      const res = await fetch(`${backendUrl}/api/feedback/summary`);
-      return await res.json();
-    } catch (err) {
-      console.warn("Feedback summary fallback:", err);
-      return null;
-    }
-  }
-
-  /**
-   * Fetch list of all logged feedback items.
-   */
-  async getFeedbackList() {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
-    try {
-      const res = await fetch(`${backendUrl}/api/feedback`);
-      return await res.json();
-    } catch (err) {
-      console.warn("Feedback list fallback:", err);
+      console.warn("Feedback submission error:", err);
       return null;
     }
   }
