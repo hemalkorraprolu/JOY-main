@@ -6,3 +6,10 @@ pydantic
 python-multipart
 groq
 python-dotenv
+pypdf
+python-docx
+python-pptx
+openpyxl
+pillow
+httpx
+

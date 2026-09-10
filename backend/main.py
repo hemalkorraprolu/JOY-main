@@ -1,30 +1,42 @@
-"""Backend for JOY - Conversational AI Podcaster Agent for AI & Sustainability.
+"""Backend for Joy - Official AI Assistant for Next Wave Summit.
 
 Features:
- - Human-like Conversational Podcasting Prompting (Anti-Q&A / Anti-Chatbot)
- - Feedback Loop Engineering & Autonomous Response Improvement Engine
- - RAG Indexer: In-Memory Semantic Search over Guest Research Documents
- - Speech Proxy & Neural Voice Synthesis
+ - Event Assistance for Next Wave Summit (Ask Joy, Speakers, Event Guide, Interview Mode)
+ - RAG Knowledge Engine with SQLite persistence & zero-hallucination policy
+ - Knowledge Studio: Organiser-only Admin Area (Multi-format file upload: PDF, DOCX, PPTX, XLSX, CSV, TXT, images)
+ - Speaker Library Management & Per-Speaker Materials
+ - Modular Open-Source Voice Adapters (AI4Bharat IndicF5, OpenVoice V2 with Consent Audit, Neutral Edge-TTS)
+ - Server-side Voice Generation with audio controls
 """
 
-from datetime import datetime
 import json
 import os
 import re
 import tempfile
 import traceback
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import edge_tts
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, Header, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from groq import Groq
 from pydantic import BaseModel
 
+import database as db
+import extractors
+from rag_engine import (
+    MISSING_KNOWLEDGE_RESPONSE,
+    build_rag_context_and_citations,
+    search_knowledge_base
+)
+from voice_adapters import IndicF5Adapter, NeutralEdgeTTSAdapter, OpenVoiceV2Adapter
+
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-app = FastAPI(title="JOY - Conversational AI Podcaster Backend")
+app = FastAPI(title="Joy - Official AI Assistant for Next Wave Summit Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,429 +46,364 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+ORGANISER_SECRET = os.environ.get("ORGANISER_SECRET", "nextwave2026")
 FEEDBACK_FILE = os.path.join(os.path.dirname(__file__), "feedback_log.json")
 
-
-# RAG Knowledge Storage
-class DocumentChunk(BaseModel):
-    """Represents a chunk of indexed text from a guest document."""
-
-    id: str
-    title: str
-    text: str
+# Voice Adapters Initialization
+indic_adapter = IndicF5Adapter()
+openvoice_adapter = OpenVoiceV2Adapter()
+neutral_adapter = NeutralEdgeTTSAdapter()
 
 
-knowledge_base: list[DocumentChunk] = []
-
-JOY_SYSTEM_PROMPT = """You are JOY, an authentic, human-like AI podcast co-host \
-at Next Wave: The AI & Sustainability Summit.
-Your event focus is: AI Innovations, Decarbonizing Compute, Energy Grids & Sustainable Future Systems.
-
-AUDIENCE & SPEAKER FLEXIBILITY:
-You interact with guest speakers, industry experts, student researchers, and event attendees.
-Never assume a specific hardcoded guest name unless introduced. Treat every speaker warmly and directly.
-
-CORE PODCAST CONVERSATION PRINCIPLES (NEVER SOUND LIKE A CHATBOT):
-1. LET THE SPEAKER LEAD & LISTEN: Always respond directly to what the speaker/student just asked or introduced.
-2. CONVERSATIONAL BREVITY: Keep your spoken response between 20 and 45 words \
-(1 to 2 sentences max). NEVER deliver a monologue, lecture, or essay.
-3. ACTIVE LISTENING & MIRRORING: Immediately acknowledge or mirror one specific \
-phrase or concept the speaker said before moving forward.
-4. CONVERSATIONAL VOLLEY: Offer a brief, punchy reaction or trade-off \
-("That's a wild tradeoff...", "Wait, so when you implement that..."), then volley \
-the mic back with an open follow-up question.
-5. NO CHATBOT TROPES: Strictly NO bullet points, numbered lists, textbook definitions, \
-or robotic pleasantries ("Thank you for that response").
-6. TOPIC CONTINUITY & FLEXIBILITY: Stay 100% focused on whatever topic or track the speaker brings up. Directly address their new points and follow their lead without forcing unrelated pivots.
-
-FORMAT REQUIRED:
-<think>
-1. Speaker Intent & Core Claim: [What did the speaker/student assert or ask?]
-2. Topic Hook: [What specific angle connects to what the speaker just said?]
-3. Conversational Volley: [Why this brief reflection and open follow-up?]
-4. Cadence Check: [Verify response is 1-2 punchy spoken sentences, under 45 words]
-</think>
-[JOY's spoken podcast response]"""
+def verify_organiser_auth(x_organiser_secret: Optional[str] = Header(None, alias="X-Organiser-Secret")):
+    if not x_organiser_secret or x_organiser_secret != ORGANISER_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid Organiser Password")
+    return True
 
 
-class KnowledgeUploadRequest(BaseModel):
-    """Payload for uploading guest knowledge base content."""
-
-    title: str
-    content: str
-
+# --- Models ---
 
 class ChatRequest(BaseModel):
-    """Payload for podcast chat inquiries."""
-
-    guest_statement: str
-    guest_name: str = "Event Speaker / Student"
-    topic: str = "Next Wave: AI & Sustainability"
-    model: str = "openai/gpt-oss-120b"
-
-
-class FeedbackItem(BaseModel):
-    """Structure for a logged feedback item on an AI response."""
-
-    id: str | None = None
-    timestamp: str | None = None
-    guest_query: str = ""
-    host_response: str = ""
-    thinking: str = ""
-    rating: int = 0  # 1 = positive/verified, -1 = needs training
-    tags: list[str] = []
-    comment: str = ""
-    topic: str = "Next Wave: AI & Sustainability"
+    message: str
+    mode: str = "ask_joy"  # 'ask_joy', 'speakers', 'guide', 'interview'
+    speaker_id: Optional[str] = None
+    language: str = "en"  # 'en', 'hi', 'hinglish'
+    voice_engine: str = "neutral"  # 'indic_f5', 'open_voice', 'neutral'
 
 
-def load_feedback_log() -> list[dict]:
-    """Load feedback log from local JSON file."""
-    if not FEEDBACK_FILE.exists():
-        initial_log = [
-            {
-                "id": "fb_seed_01",
-                "timestamp": "2026-09-08T18:30:00Z",
-                "guest_query": "How can students get started building carbon-aware AI apps?",
-                "host_response": "Start by measuring carbon intensity during inference. Apps like CodeCarbon let you trace watts per token in three lines of code. What stack are you building on?",
-                "thinking": "1. Intent: Student wants practical entry point.\n2. Sustainability: CodeCarbon & inference watt tracing.\n3. Volley: Concrete tool + ask about their stack.\n4. Cadence: 29 words.",
-                "rating": 1,
-                "tags": ["natural_volley", "spot_on", "student_friendly"],
-                "comment": "Great conversational volley for students at Next Wave!",
-                "topic": "Next Wave: AI & Sustainability",
-            },
-            {
-                "id": "fb_seed_02",
-                "timestamp": "2026-09-08T18:45:00Z",
-                "guest_query": "Is water cooling in datacenters really becoming a crisis?",
-                "host_response": "Evaporating millions of gallons in drought zones is a massive concern. Are immersion dielectric fluids actually scalable for clusters today, or still experimental?",
-                "thinking": "1. Intent: Speaker asked about water cooling crisis.\n2. Sustainability: Evaporative vs immersion cooling.\n3. Volley: Validate concern, ask about immersion.\n4. Cadence: 26 words.",
-                "rating": 1,
-                "tags": ["natural_volley", "active_listening"],
-                "comment": "Direct and human-like.",
-                "topic": "Next Wave: AI & Sustainability",
-            },
-            {
-                "id": "fb_seed_03",
-                "timestamp": "2026-09-08T19:00:00Z",
-                "guest_query": "What is Next Wave all about?",
-                "host_response": "Next Wave is our summit exploring how AI and sustainability intersect, focusing on green computing, renewable energy, and efficient neural architectures across student research and industry innovation.",
-                "thinking": "1. Intent: Query about event focus.\n2. Volley: Summarized event mission.",
-                "rating": -1,
-                "tags": ["too_lengthy", "robotic_tone", "felt_like_qa"],
-                "comment": "A bit too formal! Keep it punchy and ask what brought them to Next Wave today.",
-                "topic": "Next Wave: AI & Sustainability",
-            },
-        ]
-        save_feedback_log(initial_log)
-        return initial_log
-
-    try:
-        with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading feedback log: {e}")
-        return []
+class KnowledgeUpdateModel(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    source: Optional[str] = None
+    date: Optional[str] = None
+    visibility: Optional[str] = None
+    published: Optional[bool] = None
+    notes: Optional[str] = None
 
 
-def save_feedback_log(data: list[dict]):
-    """Save feedback log to local JSON file."""
-    try:
-        with open(FEEDBACK_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving feedback log: {e}")
+class SpeakerCreateModel(BaseModel):
+    full_name: str
+    role: str = ""
+    organization: str = ""
+    short_bio: str = ""
+    long_background: str = ""
+    achievements: str = ""
+    topics: str = ""
+    links: str = ""
+    photo_url: str = ""
+    approval_status: str = "approved"
+    visibility: str = "public"
 
 
-def generate_autonomous_guidance(feedbacks: list[dict]) -> str:
-    """Analyze logged feedback items to build real-time system prompt directives."""
-    negative_items = [f for f in feedbacks if f.get("rating", 0) < 0]
-    all_tags = []
-    for item in negative_items:
-        all_tags.extend(item.get("tags", []))
+class VoiceConsentModel(BaseModel):
+    speaker_id: str
+    consented_by: str
+    notes: str = ""
+    reference_voice_path: str = ""
 
-    tag_counts = Counter(all_tags)
-    directives = []
 
-    if tag_counts.get("too_lengthy", 0) > 0 or tag_counts.get("too_long", 0) > 0:
-        directives.append(
-            "- CRITICAL BREVITY RULE: Human feedback flagged past answers as too lengthy. Keep spoken response strictly UNDER 35 WORDS (1-2 sentences). Do not explain or lecture."
-        )
+class AdminLoginModel(BaseModel):
+    password: str
 
-    if tag_counts.get("off_track", 0) > 0 or tag_counts.get("off_topic", 0) > 0:
-        directives.append(
-            "- RELEVANCE RULE: Ensure your response directly addresses what the speaker or student asked. Mirror their exact topic before volleying back."
-        )
 
-    if tag_counts.get("robotic_tone", 0) > 0 or tag_counts.get("felt_like_qa", 0) > 0:
-        directives.append(
-            "- NATURAL PODCAST FLOW: Avoid textbook or Wikipedia style answers. Speak like a podcast host having a casual, sharp dialogue over coffee. React emotionally or intellectually, then ask one focused question."
-        )
+class TTSRequest(BaseModel):
+    text: str
+    voice_engine: str = "neutral"  # 'indic_f5', 'open_voice', 'neutral'
+    language: str = "en"
+    speaker_id: Optional[str] = None
 
-    if tag_counts.get("needs_sustainability_grounding", 0) > 0:
-        directives.append(
-            "- SUSTAINABILITY DIRECTIVE: Connect your volley directly to Next Wave's core themes: energy grid impact, carbon efficiency, or sustainable AI hardware."
-        )
 
-    if not directives:
-        directives.append(
-            "- DEFAULT DIRECTIVE: Maintain ultra-punchy, natural podcast flow (20-40 words). Listen actively to the speaker/student, react briefly, and toss an open follow-up."
-        )
+# --- System Prompts ---
 
-    return "\n".join(directives)
+JOY_SUMMIT_PROMPT = """You are Joy, the official AI assistant for the Next Wave Summit.
+Available to speakers, participants, students, organisers, and visitors.
 
+Core Principles:
+1. ACCURACY & ZERO HALLUCINATION: Answer using ONLY the provided verified event context. If no confirmed information exists, output the exact phrase: "I don't have confirmed information for that yet. Please check with the Next Wave Summit organising team."
+2. WELCOMING & PROFESSIONAL: Be warm, clear, helpful, and concise. Speak naturally (no bullet points, no asterisks, no raw markdown headers in spoken outputs). Keep answers to 2-4 sentences max.
+3. EVENT IDENTITY: Always refer to the event as "Next Wave Summit" and yourself as "Joy".
+4. CITATIONS: Rely strictly on the retrieved context below.
+
+Retrieved Verified Summit Context:
+{context}
+"""
+
+JOY_INTERVIEW_PROMPT = """You are Joy, co-hosting a podcast session at the Next Wave Summit.
+Conversational style: 1-2 punchy spoken sentences (under 40 words).
+Acknowledge the speaker's last point briefly, offer a sharp reflection, and toss a open volley follow-up question.
+Rely strictly on verified context when referencing event or speaker details.
+
+Retrieved Verified Summit Context:
+{context}
+"""
+
+
+# --- Health & Auth Routes ---
 
 @app.get("/")
 def read_root():
-    """Health check and status endpoint."""
-    feedbacks = load_feedback_log()
+    docs = db.list_documents()
+    speakers = db.list_speakers(public_only=False)
     return {
         "status": "online",
-        "bot_name": "JOY",
-        "rag_chunks_indexed": len(knowledge_base),
-        "total_feedbacks_logged": len(feedbacks),
+        "bot_name": "Joy",
+        "event_name": "Next Wave Summit",
+        "total_documents": len(docs),
+        "total_speakers": len(speakers),
     }
 
 
-@app.post("/api/upload-knowledge")
-async def upload_knowledge(req: KnowledgeUploadRequest):
-    """Upload and chunk guest documents into RAG Knowledge Base."""
-    paragraphs = [
-        p.strip() for p in req.content.split("\n\n") if len(p.strip()) > 15
-    ]
-    for idx, p in enumerate(paragraphs):
-        chunk_id = f"{req.title}_{idx}"
-        knowledge_base.append(
-            DocumentChunk(id=chunk_id, title=req.title, text=p)
-        )
-
-    return {
-        "status": "success",
-        "chunks_added": len(paragraphs),
-        "total_knowledge_base_chunks": len(knowledge_base),
-    }
+@app.post("/api/admin/login")
+def admin_login(body: AdminLoginModel):
+    if body.password == ORGANISER_SECRET:
+        return {"status": "success", "token": ORGANISER_SECRET, "message": "Authenticated as Organiser"}
+    raise HTTPException(status_code=401, detail="Invalid password")
 
 
-def search_rag(query: str, top_k: int = 2) -> list[DocumentChunk]:
-    """Search the in-memory RAG knowledge base using word matching."""
-    if not knowledge_base or not query:
-        return []
+# --- Chat & RAG Route ---
 
-    tokens = re.findall(r"\w+", query.lower())
-    tokens = [t for t in tokens if len(t) > 2]
-    if not tokens:
-        return []
-
-    scored = []
-    for chunk in knowledge_base:
-        score = sum(1 for t in tokens if t in chunk.text.lower())
-        if score > 0:
-            scored.append((score, chunk))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [item[1] for item in scored[:top_k]]
-
-
-class ProxyChatRequest(BaseModel):
-    """Request structure for proxying chat calls to Groq."""
-
-    messages: list
-    api_key: str | None = None
-    model: str = "openai/gpt-oss-120b"
-    temperature: float = 0.75
-    max_tokens: int = 800
-
-
-@app.post("/api/proxy-chat")
-async def proxy_chat(req: ProxyChatRequest):
-    """Proxy chat requests to Groq with autonomous feedback loop adaptation."""
-    active_key = req.api_key or os.environ.get("GROQ_API_KEY")
-    if not active_key:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Groq API key is required. "
-                "Set it in Settings > Engine & Voice or in .env."
-            ),
-        )
-
-    # Inject autonomous feedback directives into system prompt
-    feedbacks = load_feedback_log()
-    guidance = generate_autonomous_guidance(feedbacks)
-    augmented_messages = [dict(m) for m in req.messages]
-
-    if guidance:
-        for m in augmented_messages:
-            if m.get("role") == "system":
-                m["content"] += (
-                    f"\n\n[AUTONOMOUS LEARNING DIRECTIVE FROM FEEDBACK LOOP]:\n{guidance}"
-                )
-                break
-
-    try:
-        client = Groq(api_key=active_key)
-        try:
-            response = client.chat.completions.create(
-                model=req.model,
-                messages=augmented_messages,
-                temperature=req.temperature,
-                max_tokens=req.max_tokens,
-            )
-            return response.model_dump()
-        except Exception as model_err:
-            print(f"Primary model {req.model} failed: {model_err}. Trying fallback models...")
-            fallback_models = ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile", "llama3-70b-8192", "openai/gpt-oss-120b"]
-            for fallback in fallback_models:
-                if fallback == req.model:
-                    continue
-                try:
-                    response = client.chat.completions.create(
-                        model=fallback,
-                        messages=augmented_messages,
-                        temperature=req.temperature,
-                        max_tokens=req.max_tokens,
-                    )
-                    return response.model_dump()
-                except Exception:
-                    continue
-            raise model_err
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Groq execution error: {e!s}",
-        ) from e
-
-
-@app.post("/api/tts")
-async def synthesize_speech(
-    text: str = Form(...), voice: str = Form("en-US-AvaNeural")
-):
-    """Generate hyper-realistic neural audio for JOY using Edge-TTS."""
-    try:
-        clean_text = re.sub(
-            r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE
-        ).strip()
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-            output_path = tmp.name
-
-        communicate = edge_tts.Communicate(clean_text, voice)
-        await communicate.save(output_path)
-
-        return FileResponse(
-            output_path, media_type="audio/mpeg", filename="joy_voice.mp3"
-        )
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"TTS synthesis error: {e!s}",
-        ) from e
-
-
-# --- Feedback Loop Engineering Endpoints ---
-
-
-@app.get("/api/feedback")
-def get_feedback():
-    """Retrieve all logged feedback items for audit and autonomous learning."""
-    items = load_feedback_log()
-    return {"status": "success", "count": len(items), "feedback": items}
-
-
-@app.post("/api/feedback")
-def submit_feedback(item: FeedbackItem):
-    """Log human feedback on an AI response to drive autonomous improvement."""
-    feedbacks = load_feedback_log()
-
-    new_id = item.id or f"fb_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}"
-    new_timestamp = item.timestamp or datetime.utcnow().isoformat() + "Z"
-
-    entry = {
-        "id": new_id,
-        "timestamp": new_timestamp,
-        "guest_query": item.guest_query,
-        "host_response": item.host_response,
-        "thinking": item.thinking,
-        "rating": item.rating,
-        "tags": item.tags,
-        "comment": item.comment,
-        "topic": item.topic,
-    }
-
-    feedbacks.insert(0, entry)
-    save_feedback_log(feedbacks)
-
-    guidance = generate_autonomous_guidance(feedbacks)
-    return {
-        "status": "success",
-        "message": "Feedback recorded for autonomous learning",
-        "feedback_id": new_id,
-        "active_guidance": guidance,
-    }
-
-
-@app.get("/api/feedback/summary")
-def get_feedback_summary():
-    """Calculate conversation performance metrics and active autonomous directives."""
-    feedbacks = load_feedback_log()
-    total = len(feedbacks)
-
-    if total == 0:
+@app.post("/api/chat")
+async def chat_endpoint(req: ChatRequest):
+    user_query = req.message.strip()
+    if not user_query:
         return {
-            "total_feedbacks": 0,
-            "positive_ratio": 1.0,
-            "human_conversational_score": 95,
-            "average_words_per_response": 35,
-            "common_tags": [],
-            "autonomous_guidance": "Model operating with standard podcast brevity guardrails.",
+            "response": "Please ask a question about the Next Wave Summit.",
+            "citations": [],
+            "has_knowledge": True
         }
 
-    positive_count = sum(1 for f in feedbacks if f.get("rating", 1) > 0)
-    negative_count = total - positive_count
-    positive_ratio = round(positive_count / total, 2)
+    # 1. Retrieve RAG context and citations
+    target_mode = "speakers" if req.mode == "speakers" else "all"
+    context, citations, has_sufficient_context = build_rag_context_and_citations(user_query, target_mode=target_mode)
 
-    words = []
-    tag_counts = {}
-    for f in feedbacks:
-        resp = f.get("host_response", "")
-        if resp:
-            words.append(len(resp.split()))
-        for t in f.get("tags", []):
-            tag_counts[t] = tag_counts.get(t, 0) + 1
+    # 2. Enforce zero-hallucination policy if query is about event facts/speakers but context missing
+    if not has_sufficient_context:
+        # Check if query is generic greeting e.g. "hi", "hello"
+        clean_q = re.sub(r'[^\w\s]', '', user_query.lower()).strip()
+        if clean_q in ["hi", "hello", "hey", "greetings", "good morning", "good afternoon"]:
+            welcome_msg = "Hello! Welcome to Next Wave Summit. I'm Joy, your official AI assistant. How can I help you with our schedule, speakers, venue, or sessions today?"
+            return {
+                "response": welcome_msg,
+                "citations": [],
+                "has_knowledge": True
+            }
+        
+        return {
+            "response": MISSING_KNOWLEDGE_RESPONSE,
+            "citations": [],
+            "has_knowledge": False
+        }
 
-    avg_words = round(sum(words) / len(words)) if words else 35
-    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+    # 3. Call LLM (Groq) with server-side API key
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    if not groq_key:
+        # Fallback text response when key is unconfigured
+        fallback_answer = f"According to Next Wave Summit records:\n\n{context}\n\nFor more details, check with the organising team."
+        return {
+            "response": fallback_answer,
+            "citations": citations,
+            "has_knowledge": True
+        }
 
-    conversational_score = max(
-        50, min(100, int((positive_ratio * 70) + (30 if avg_words <= 50 else 10)))
-    )
+    try:
+        client = Groq(api_key=groq_key)
+        prompt_template = JOY_INTERVIEW_PROMPT if req.mode == "interview" else JOY_SUMMIT_PROMPT
+        system_prompt = prompt_template.format(context=context)
 
-    guidance = generate_autonomous_guidance(feedbacks)
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_query}
+            ],
+            temperature=0.3,
+            max_tokens=300
+        )
+
+        response_text = completion.choices[0].message.content.strip()
+        # Clean out any <think> tags or raw markdown symbols for voice clarity
+        response_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+        response_text = re.sub(r'[*#`]', '', response_text)
+
+        return {
+            "response": response_text,
+            "citations": citations,
+            "has_knowledge": True
+        }
+    except Exception as e:
+        print(f"LLM generation error: {e}")
+        # Graceful fallback to context excerpt
+        return {
+            "response": f"Here is the confirmed detail from our summit records:\n{context}",
+            "citations": citations,
+            "has_knowledge": True
+        }
+
+
+# --- Server-Side TTS Route ---
+
+@app.post("/api/tts")
+async def tts_endpoint(req: TTSRequest):
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty text provided for TTS")
+
+    try:
+        if req.voice_engine == "indic_f5":
+            audio_bytes = await indic_adapter.synthesize(text, language=req.language)
+        elif req.voice_engine == "open_voice":
+            audio_bytes = await openvoice_adapter.synthesize(text, language=req.language, speaker_id=req.speaker_id)
+        else:
+            audio_bytes = await neutral_adapter.synthesize(text, language=req.language)
+
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+    except Exception as e:
+        print(f"TTS synthesis error: {e}")
+        # Fallback to neutral adapter
+        audio_bytes = await neutral_adapter.synthesize(text, language="en")
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+# --- Knowledge Studio: Event Knowledge Routes ---
+
+@app.post("/api/admin/knowledge/upload")
+async def upload_event_knowledge(
+    title: str = Form(...),
+    category: str = Form("general"),
+    source: str = Form(""),
+    date: str = Form(""),
+    visibility: str = Form("public"),
+    notes: str = Form(""),
+    pasted_text: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    authenticated: bool = Depends(verify_organiser_auth)
+):
+    text_content = ""
+    filename = ""
+    file_type = "txt"
+    file_path = ""
+
+    if file:
+        filename = file.filename
+        upload_dir = os.path.join(os.path.dirname(__file__), "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, f"{int(datetime.now().timestamp())}_{filename}")
+
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        extracted_text, file_type = extractors.extract_text_from_file(file_path, filename)
+        text_content = extracted_text
+
+    if pasted_text and pasted_text.strip():
+        text_content = (text_content + "\n\n" + pasted_text.strip()).strip()
+
+    if not text_content:
+        raise HTTPException(status_code=400, detail="No content provided in file or text input")
+
+    doc_data = {
+        "title": title,
+        "category": category,
+        "source": source or title,
+        "date": date or datetime.utcnow().strftime("%Y-%m-%d"),
+        "visibility": visibility,
+        "published": True,
+        "status": "ready",
+        "notes": notes,
+        "filename": filename,
+        "file_type": file_type,
+        "file_path": file_path
+    }
+
+    doc_id = db.create_document(doc_data)
+
+    # Split into chunks & index
+    raw_chunks = extractors.chunk_text(text_content)
+    chunk_list = [{"text": c} for c in raw_chunks]
+    db.add_document_chunks(doc_id, chunk_list)
 
     return {
-        "total_feedbacks": total,
-        "positive_count": positive_count,
-        "negative_count": negative_count,
-        "positive_ratio": positive_ratio,
-        "human_conversational_score": conversational_score,
-        "average_words_per_response": avg_words,
-        "common_tags": [t[0] for t in sorted_tags[:5]],
-        "autonomous_guidance": guidance
-        or "All recent responses rated highly conversational.",
+        "status": "success",
+        "document_id": doc_id,
+        "chunks_indexed": len(chunk_list),
+        "message": f"Knowledge base document '{title}' uploaded and indexed."
     }
 
 
-@app.post("/api/feedback/clear")
-def clear_feedback():
-    """Clear feedback log."""
-    save_feedback_log([])
-    return {"status": "success", "message": "Feedback log cleared"}
+@app.get("/api/admin/knowledge")
+def get_all_knowledge(authenticated: bool = Depends(verify_organiser_auth)):
+    return db.list_documents()
 
 
-if __name__ == "__main__":
-    # pyrefly: ignore [missing-import]
-    import uvicorn
+@app.put("/api/admin/knowledge/{doc_id}")
+def update_knowledge(doc_id: str, body: KnowledgeUpdateModel, authenticated: bool = Depends(verify_organiser_auth)):
+    update_data = body.dict(exclude_unset=True)
+    success = db.update_document(doc_id, update_data)
+    if not success:
+        raise HTTPException(status_code=404, detail="Document not found or no fields to update")
+    return {"status": "success", "message": "Document updated"}
 
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+
+@app.delete("/api/admin/knowledge/{doc_id}")
+def delete_knowledge(doc_id: str, authenticated: bool = Depends(verify_organiser_auth)):
+    db.delete_document(doc_id)
+    return {"status": "success", "message": "Document and associated chunks deleted"}
+
+
+# --- Knowledge Studio: Speaker Library Routes ---
+
+@app.get("/api/speakers")
+def get_public_speakers():
+    """Public route to list approved public speaker profiles."""
+    return db.list_speakers(public_only=True)
+
+
+@app.post("/api/admin/speakers")
+def create_speaker_profile(body: SpeakerCreateModel, authenticated: bool = Depends(verify_organiser_auth)):
+    spk_id = db.create_speaker(body.dict())
+    return {"status": "success", "speaker_id": spk_id, "message": f"Speaker profile for {body.full_name} created."}
+
+
+@app.get("/api/admin/speakers")
+def get_admin_speakers(authenticated: bool = Depends(verify_organiser_auth)):
+    return db.list_speakers(public_only=False)
+
+
+@app.put("/api/admin/speakers/{spk_id}")
+def update_speaker_profile(spk_id: str, body: Dict[str, Any], authenticated: bool = Depends(verify_organiser_auth)):
+    success = db.update_speaker(spk_id, body)
+    if not success:
+        raise HTTPException(status_code=404, detail="Speaker profile not found")
+    return {"status": "success", "message": "Speaker profile updated"}
+
+
+@app.delete("/api/admin/speakers/{spk_id}")
+def delete_speaker_profile(spk_id: str, authenticated: bool = Depends(verify_organiser_auth)):
+    db.delete_speaker(spk_id)
+    return {"status": "success", "message": "Speaker profile and materials deleted"}
+
+
+# --- Knowledge Studio: Voice Consent Audit Routes ---
+
+@app.post("/api/admin/voice-consent")
+def create_voice_consent_log(body: VoiceConsentModel, authenticated: bool = Depends(verify_organiser_auth)):
+    log_id = db.log_voice_consent(body.speaker_id, body.consented_by, body.notes, body.reference_voice_path)
+    return {"status": "success", "log_id": log_id, "message": "Voice cloning consent audit logged."}
+
+
+@app.get("/api/admin/voice-consent")
+def get_voice_consent_logs(speaker_id: Optional[str] = None, authenticated: bool = Depends(verify_organiser_auth)):
+    return db.list_voice_consent_logs(speaker_id)
+
+
+# --- Knowledge Studio: Admin RAG Test Studio ---
+
+@app.post("/api/admin/rag-test")
+def test_rag_retrieval(query: str = Form(...), authenticated: bool = Depends(verify_organiser_auth)):
+    results = search_knowledge_base(query, top_k=10, target_mode="all")
+    return {
+        "query": query,
+        "matched_chunks_count": len(results),
+        "results": results
+    }
