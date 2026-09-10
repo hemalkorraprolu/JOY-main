@@ -294,14 +294,31 @@ async def proxy_chat(req: ProxyChatRequest):
 
     try:
         client = Groq(api_key=active_key)
-
-        response = client.chat.completions.create(
-            model=req.model,
-            messages=augmented_messages,
-            temperature=req.temperature,
-            max_tokens=req.max_tokens,
-        )
-        return response.model_dump()
+        try:
+            response = client.chat.completions.create(
+                model=req.model,
+                messages=augmented_messages,
+                temperature=req.temperature,
+                max_tokens=req.max_tokens,
+            )
+            return response.model_dump()
+        except Exception as model_err:
+            print(f"Primary model {req.model} failed: {model_err}. Trying fallback models...")
+            fallback_models = ["qwen/qwen3.6-27b", "llama-3.3-70b-versatile", "llama3-70b-8192", "openai/gpt-oss-120b"]
+            for fallback in fallback_models:
+                if fallback == req.model:
+                    continue
+                try:
+                    response = client.chat.completions.create(
+                        model=fallback,
+                        messages=augmented_messages,
+                        temperature=req.temperature,
+                        max_tokens=req.max_tokens,
+                    )
+                    return response.model_dump()
+                except Exception:
+                    continue
+            raise model_err
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(

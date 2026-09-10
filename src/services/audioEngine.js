@@ -147,25 +147,119 @@ export class AudioEngine {
   }
 
   /**
-   * Speaks podcast response out loud with persona-aware voice settings.
+   * Unlock AudioContext and SpeechSynthesis on first user gesture.
+   */
+  unlockAudioContext() {
+    if (this.synthesis && this.synthesis.paused) {
+      try {
+        this.synthesis.resume();
+      } catch (e) {}
+    }
+    this._ensureAudioContext();
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      try {
+        this.audioContext.resume();
+      } catch (e) {}
+    }
+  }
+
+  /**
+   * Speaks podcast response out loud with Edge-TTS backend neural voice
+   * or persona-aware Web Speech fallback.
    *
    * @param {string} text - Text to speak
-   * @param {object} options - { pitch, rate, onStart, onEnd, onError }
+   * @param {object} options - { pitch, rate, voiceName, onStart, onEnd, onError }
    */
-  speakText(text, { pitch = 1.0, rate = 1.0, onStart, onEnd, onError } = {}) {
-    if (!this.synthesis) {
-      if (onError) onError("Speech Synthesis not supported");
+  async speakText(text, { pitch = 1.0, rate = 1.0, voiceName = "en-US-AvaNeural", onStart, onEnd, onError } = {}) {
+    this.unlockAudioContext();
+    this.stopSpeaking();
+
+    // Clean text of markdown/tags if any remain
+    const cleanText = text
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/[*_#`~]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!cleanText) {
+      if (onEnd) onEnd();
       return;
     }
 
-    // Cancel any active speech
-    this.synthesis.cancel();
+    // Attempt 1: Try Neural Edge-TTS via backend API
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+    try {
+      const formData = new FormData();
+      formData.append("text", cleanText);
+      formData.append("voice", voiceName || "en-US-AvaNeural");
 
-    // Clean text of markdown/tags if any remain
-    const cleanText = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/[*_#]/g, "").trim();
+      const response = await fetch(`${backendUrl}/api/tts`, {
+        method: "POST",
+        body: formData
+      });
+
+      if (response.ok) {
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+
+        this.currentAudio = audio;
+        this.isSpeaking = true;
+
+        audio.onplay = () => {
+          if (onStart) onStart();
+        };
+
+        audio.onended = () => {
+          this.isSpeaking = false;
+          this.currentAudio = null;
+          URL.revokeObjectURL(audioUrl);
+          if (onEnd) onEnd();
+        };
+
+        audio.onerror = (err) => {
+          console.warn("Edge-TTS Audio playback error, using Web Speech fallback:", err);
+          this.isSpeaking = false;
+          this.currentAudio = null;
+          URL.revokeObjectURL(audioUrl);
+          this._speakWebSpeechFallback(cleanText, { pitch, rate, onStart, onEnd, onError });
+        };
+
+        await audio.play();
+        return;
+      }
+    } catch (err) {
+      console.warn("Backend TTS endpoint unreachable, falling back to Web Speech:", err);
+    }
+
+    // Fallback: Web Speech API
+    this._speakWebSpeechFallback(cleanText, { pitch, rate, onStart, onEnd, onError });
+  }
+
+  _speakWebSpeechFallback(cleanText, { pitch = 1.0, rate = 1.0, onStart, onEnd, onError }) {
+    if (!this.synthesis) {
+      if (onError) onError("Speech Synthesis not supported");
+      if (onEnd) onEnd();
+      return;
+    }
+
+    try {
+      this.synthesis.cancel();
+      if (this.synthesis.paused) {
+        this.synthesis.resume();
+      }
+    } catch (e) {}
+
+    // Ensure voice is selected if loaded late
+    if (!this.selectedVoice && this.voices.length > 0) {
+      this.selectedVoice = this.voices.find(v => v.lang.startsWith("en")) || this.voices[0];
+    }
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.voice = this.selectedVoice;
+    if (this.selectedVoice) {
+      utterance.voice = this.selectedVoice;
+    }
+    utterance.volume = 1.0; // Ensure maximum audible volume
     utterance.pitch = pitch;
     utterance.rate = rate;
 
@@ -183,16 +277,26 @@ export class AudioEngine {
       this.isSpeaking = false;
       console.warn("Speech Synthesis Utterance Error:", e);
       if (onError) onError(e);
+      if (onEnd) onEnd();
     };
 
     this.synthesis.speak(utterance);
   }
 
   stopSpeaking() {
-    if (this.synthesis) {
-      this.synthesis.cancel();
-      this.isSpeaking = false;
+    if (this.currentAudio) {
+      try {
+        this.currentAudio.pause();
+        this.currentAudio.currentTime = 0;
+      } catch (e) {}
+      this.currentAudio = null;
     }
+    if (this.synthesis) {
+      try {
+        this.synthesis.cancel();
+      } catch (e) {}
+    }
+    this.isSpeaking = false;
   }
 
   /**
@@ -236,3 +340,4 @@ export class AudioEngine {
     }
   }
 }
+

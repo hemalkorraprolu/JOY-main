@@ -62,13 +62,18 @@ export function AIInterface() {
   const [guests, setGuests] = useState(DEFAULT_GUESTS);
   const [activeGuestId, setActiveGuestId] = useState(DEFAULT_GUESTS[0].id);
   const [hostPersonaId, setHostPersonaId] = useState('alex');
-  const [config, setConfig] = useState({
-    conferenceName: 'Next Wave: AI & Sustainability',
-    topic: 'AI Innovations, Decarbonizing Compute & Energy Grids',
-    engine: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? 'groq' : 'browser',
-    groqApiKey: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? import.meta.env.VITE_GROQ_API_KEY : '',
-    ollamaModel: 'llama3.2',
-    ollamaUrl: 'http://localhost:11434'
+  const [config, setConfig] = useState(() => {
+    const savedKey = typeof localStorage !== 'undefined' ? localStorage.getItem('joy_groq_api_key') : null;
+    const activeKey = savedKey || import.meta.env.VITE_GROQ_API_KEY || '';
+    const cleanKey = (activeKey && !activeKey.includes('your_api_key')) ? activeKey : '';
+    return {
+      conferenceName: 'Next Wave: AI & Sustainability',
+      topic: 'AI Innovations, Decarbonizing Compute & Energy Grids',
+      engine: 'groq',
+      groqApiKey: cleanKey,
+      ollamaModel: 'llama3.2',
+      ollamaUrl: 'http://localhost:11434'
+    };
   });
 
   const activeGuest = guests.find(g => g.id === activeGuestId) || guests[0];
@@ -152,10 +157,13 @@ export function AIInterface() {
   };
 
   const handleStartInterview = async () => {
+    if (audioRef.current) {
+      audioRef.current.unlockAudioContext();
+    }
     setStageStatus('thinking');
 
     try {
-      const response = await agentRef.current.generateOpening();
+      const response = await agentRef.current.generateOpening(activeGuestId);
       const turnId = `host_turn_${Date.now()}`;
 
       setTranscript([{
@@ -172,6 +180,7 @@ export function AIInterface() {
       audioRef.current.speakText(response.spokenResponse, {
         pitch: hostPersona.pitch,
         rate: hostPersona.rate,
+        voiceName: hostPersona.voice || "en-US-AvaNeural",
         onStart: () => audioRef.current.startMicVisualizer(),
         onEnd: () => {
           // Auto-start listening so speaker/student can talk first right after the welcome!
@@ -193,6 +202,9 @@ export function AIInterface() {
   };
 
   const handleToggleListening = () => {
+    if (audioRef.current) {
+      audioRef.current.unlockAudioContext();
+    }
     if (stageStatus === 'listening_guest') {
       audioRef.current.stopListening();
       if (guestText.trim()) {
@@ -253,6 +265,7 @@ export function AIInterface() {
       audioRef.current.speakText(response.spokenResponse, {
         pitch: hostPersona.pitch,
         rate: hostPersona.rate,
+        voiceName: hostPersona.voice || "en-US-AvaNeural",
         onEnd: () => setStageStatus('idle')
       });
     } catch (err) {

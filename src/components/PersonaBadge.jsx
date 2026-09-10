@@ -17,6 +17,7 @@ export const HOST_PERSONAS = {
     description: 'Sharp, data-driven follow-ups. Probes compute trade-offs, megawatts, and concrete efficiency metrics at Next Wave.',
     pitch: 1.1,
     rate: 1.0,
+    voice: 'en-US-AvaNeural',
     systemPromptFlavor: `You are JOY in Analytical Mode at Next Wave. Your podcast interviewing style:
 - Speak in brief, punchy conversational volleys (20-40 words max).
 - Probe for hard energy metrics, compute cost per watt, and thermal trade-offs.
@@ -31,6 +32,7 @@ export const HOST_PERSONAS = {
     description: 'Inspiring connections between green computing and planetary impact. Big-picture systemic thinking at Next Wave.',
     pitch: 1.15,
     rate: 0.95,
+    voice: 'en-US-JennyNeural',
     systemPromptFlavor: `You are JOY in Visionary Mode at Next Wave. Your podcast interviewing style:
 - Speak in warm, concise conversational bursts (20-40 words max).
 - Connect the speaker's or student's breakthrough to broader climate modeling, clean energy grids, and net-zero futures.
@@ -44,6 +46,7 @@ export const HOST_PERSONAS = {
     description: 'Provocative and contrarian. Challenges greenwashing, grid reliability, and hidden supply chain costs at Next Wave.',
     pitch: 1.05,
     rate: 1.05,
+    voice: 'en-US-AriaNeural',
     systemPromptFlavor: `You are JOY in Devil's Advocate Mode at Next Wave. Your podcast interviewing style:
 - Speak in fast, candid conversational volleys (20-40 words max).
 - Respectfully challenge claims: What about intermittent renewable grids, embodied carbon in chips, and greenwashing?

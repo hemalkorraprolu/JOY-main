@@ -146,6 +146,9 @@ export function SettingsModal({
   };
 
   const handleApply = () => {
+    if (typeof localStorage !== 'undefined' && localConfig.groqApiKey) {
+      localStorage.setItem('joy_groq_api_key', localConfig.groqApiKey);
+    }
     onConfigChange(localConfig);
     onClose();
   };

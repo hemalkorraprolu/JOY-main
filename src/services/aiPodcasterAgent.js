@@ -86,8 +86,13 @@ export class AIPodcasterAgent {
     this.history = [];
     this.usedTemplates = new Set();
 
-    this.engine = config.engine || "browser";
-    this.groqApiKey = config.groqApiKey || import.meta.env.VITE_GROQ_API_KEY || "";
+    // Check localStorage for saved key
+    const savedGroqKey = typeof localStorage !== 'undefined' ? localStorage.getItem('joy_groq_api_key') : null;
+    const activeKey = config.groqApiKey || savedGroqKey || import.meta.env.VITE_GROQ_API_KEY || "";
+    
+    // Clean key string if placeholder
+    this.groqApiKey = (activeKey && !activeKey.includes('your_api_key')) ? activeKey : "";
+    this.engine = config.engine || (this.groqApiKey ? "groq" : "groq");
     this.ollamaModel = config.ollamaModel || "llama3.2";
     this.ollamaUrl = config.ollamaUrl || "http://localhost:11434";
 
@@ -108,7 +113,12 @@ export class AIPodcasterAgent {
 
   setEngineConfig({ engine, groqApiKey, ollamaModel, ollamaUrl, topic, conferenceName }) {
     if (engine) this.engine = engine;
-    if (groqApiKey !== undefined) this.groqApiKey = groqApiKey;
+    if (groqApiKey !== undefined) {
+      this.groqApiKey = groqApiKey;
+      if (typeof localStorage !== 'undefined' && groqApiKey) {
+        localStorage.setItem('joy_groq_api_key', groqApiKey);
+      }
+    }
     if (ollamaModel) this.ollamaModel = ollamaModel;
     if (ollamaUrl) this.ollamaUrl = ollamaUrl;
     if (topic) this.topic = topic;
@@ -184,12 +194,13 @@ Speakers can be guest experts, student researchers, or audience members asking q
 
 ${additionalContext ? `ADDITIONAL CONTEXT:\n${additionalContext}\n` : ''}
 CORE PODCAST CONVERSATION RULES (NEVER SOUND LIKE A CHATBOT):
-1. LISTEN & RESPOND TO SPEAKER FIRST: Address whatever the speaker or student just introduced.
+1. LISTEN & RESPOND TO SPEAKER FIRST: Directly address whatever the speaker or student just introduced.
 2. CONVERSATIONAL BREVITY: Keep your spoken response strictly between 20 and 45 words (1 to 2 sentences max). NEVER deliver a monologue or lecture.
 3. ACTIVE LISTENING & MIRRORING: Immediately acknowledge or mirror one specific phrase or concept the speaker said.
-4. CONVERSATIONAL VOLLEY: Offer a brief reaction or trade-off, then volley the mic back with an open follow-up question.
-5. NO CHATBOT TROPES: Strictly NO bullet points, numbered lists, textbook definitions, or robotic pleasantries.
+4. CONVERSATIONAL VOLLEY: Offer a brief 1-sentence reaction, then volley the mic back with an open follow-up question.
+5. NO CHATBOT TROPES: Strictly NO bullet points, numbered lists, textbook definitions, or robotic pleasantries ("Thank you for that response", "As an AI model").
 6. TOPIC CONTINUITY & FLEXIBILITY: Stay 100% focused on whatever topic or track the speaker brings up. Directly address their new points and follow their lead without forcing unrelated pivots.
+7. VOICE-READY DIALOGUE: Write clean, spoken text without markdown symbols (*, #, \`).
 
 FORMAT REQUIRED:
 <think>
@@ -201,19 +212,39 @@ FORMAT REQUIRED:
 [JOY's spoken podcast response]`;
   }
 
-  async generateOpening() {
+  async generateOpening(guestId = null) {
+    const activeGuest = (guestId ? this._getGuest(guestId) : null) || this.guests[0];
+    const guestName = activeGuest ? activeGuest.name : 'our guest';
+    const guestRole = activeGuest ? activeGuest.role : '';
+    const guestBio = activeGuest ? activeGuest.bio : '';
+
+    let defaultOpeningText = `Welcome to Next Wave! I'm JOY, your AI podcast host. Today we're exploring ${this.topic} with ${guestName}. ${guestName}, what is the main breakthrough or challenge shaping your current work in sustainable compute?`;
+
+    if (guestName.includes('Sarah Lin')) {
+      defaultOpeningText = `Welcome to Next Wave! I'm JOY, your AI podcast host. Today we're exploring AI innovations and green computing with Dr. Sarah Lin. Sarah, your research focuses on carbon-aware neural reasoning—what key breakthrough allowed your team to cut LLM training energy consumption so significantly?`;
+    } else if (guestName.includes('Marcus Vance')) {
+      defaultOpeningText = `Welcome to Next Wave! I'm JOY, your AI podcast host. Today we're diving into green compute systems with Prof. Marcus Vance. Marcus, your work focuses on dynamic renewable load-shifting for AI clusters—what is the biggest hurdle to scaling zero-carbon datacenters today?`;
+    }
+
     const defaultOpening = {
-      thinking: "1. Intent: Welcome speaker & audience to Next Wave.\n2. Action: Introduce JOY as AI co-host.\n3. Volley: Invite speaker to suggest a question or state any doubts.\n4. Cadence: Warm, punchy podcast host.",
-      spokenResponse: `Welcome to Next Wave! I'm JOY, your AI co-host. We're thrilled to have you at the mic today. Please feel free to suggest a question, introduce your topic, or share any doubts you'd like to discuss.`
+      thinking: `1. Intent: Podcast Opening & Guest Welcome.\n2. Guest Context: ${guestName}${guestRole ? ' (' + guestRole + ')' : ''}.\n3. Action: Introduce conference topic (${this.topic}) & launch sharp opening question.\n4. Cadence: Warm, broadcast-ready AI podcast co-host.`,
+      spokenResponse: defaultOpeningText
     };
 
     try {
-      const prompt = `Generate a brief 2-sentence warm event welcome for Next Wave (${this.conferenceName}). Introduce Next Wave, then invite the speaker to suggest a question or state any doubts. Do not ask pre-set questions.`;
+      const prompt = `Generate a broadcast-ready 2-sentence podcast host opening for ${this.conferenceName} on topic "${this.topic}".
+Featured Guest: ${guestName} ${guestRole ? `(${guestRole})` : ''}. ${guestBio ? `Bio summary: ${guestBio.substring(0, 150)}` : ''}
+
+INSTRUCTIONS:
+1. Welcome the audience to ${this.conferenceName} and introduce guest ${guestName}.
+2. Citing their area of research or role, ask ${guestName} a compelling, thought-provoking opening question to kick off the interview.
+3. Keep response strictly under 40 words (2 punchy sentences). DO NOT ask generic questions like 'feel free to ask doubts'. Act like a real podcast host!`;
+
       const res = await this._processLLMRequest([
         { role: "system", content: this._buildSystemPrompt() },
         { role: "user", content: prompt }
       ]);
-      if (res && res.spokenResponse && !res.spokenResponse.includes("thinkthink") && !res.spokenResponse.includes("reasoning steps")) {
+      if (res && res.spokenResponse && res.spokenResponse.length > 20 && !res.spokenResponse.includes("thinkthink") && !res.spokenResponse.includes("reasoning steps")) {
         return res;
       }
     } catch (err) {
@@ -331,25 +362,25 @@ FORMAT REQUIRED:
     const ragSnippet = retrieved.length > 0 ? retrieved[0] : null;
 
     const nameMatch = lastUserMessage.match(/^\[(.*?)\]:/);
-    const speakerName = nameMatch ? nameMatch[1] : 'our guest';
+    const speakerName = nameMatch ? nameMatch[1] : (this.guests[0]?.name || 'our guest');
 
     let thinking = "";
     let spokenResponse = "";
 
     // 1. Self-introduction
     if (lower.includes("about yourself") || lower.includes("who are you") || lower.includes("tell me about you") || lower.includes("what is your name") || lower.includes("who is joy") || lower.includes("what can you do")) {
-      thinking = `1. Intent: Asked for host & event intro.\n2. Action: Welcome guest to Next Wave.\n3. Volley: Invite speaker to suggest a question or state any doubts.\n4. Cadence: Punchy human host.`;
-      spokenResponse = `Welcome to Next Wave! I'm JOY, your AI co-host. What questions or topics would you like to explore today, or do you have any doubts we can dive into?`;
+      thinking = `1. Intent: Asked for host & event intro.\n2. Action: Introduce JOY & podcast mission.\n3. Volley: Ask speaker about their key focus in sustainable AI.\n4. Cadence: Punchy human host.`;
+      spokenResponse = `Welcome to Next Wave! I'm JOY, your AI co-host. We're diving into decarbonizing AI and sustainable compute today. What's the main focus of your work in this space?`;
     }
     // 2. Mic / Audio check
     else if (lower.includes("understand") || lower.includes("hear me") || lower.includes("testing") || lower.includes("hello hello") || lower.includes("can you hear")) {
-      thinking = `1. Intent: Audio verification.\n2. Action: Casual confirmation.\n3. Volley: Invite question or doubt.`;
-      spokenResponse = `Loud and clear! Audio levels are spot-on. What question or topic would you like to kick off with today?`;
+      thinking = `1. Intent: Audio verification.\n2. Action: Casual confirmation.\n3. Volley: Invite speaker to kick off their main thesis.`;
+      spokenResponse = `Loud and clear! Audio levels are spot-on. What's the core point or breakthrough you'd like to dive into today?`;
     }
     // 3. Greeting or Opening Welcome Fallback
     else if (lower === "hello" || lower === "hi" || lower.includes("happy to be here") || lower.includes("thanks for having me") || lower.includes("welcome for next wave") || lower.includes("generate a brief") || lower.length === 0) {
-      thinking = `1. Intent: Friendly greeting / Event Opening.\n2. Action: Warm event intro.\n3. Volley: Invite guest to ask their question or doubts.\n4. Cadence: Warm podcast host.`;
-      spokenResponse = `Welcome to Next Wave! We're thrilled to have you at the mic. Please feel free to suggest a question or bring up any doubts you'd like to discuss.`;
+      thinking = `1. Intent: Friendly greeting / Event Opening.\n2. Action: Warm event intro.\n3. Volley: Launch opening interview question.\n4. Cadence: Warm podcast host.`;
+      spokenResponse = `Welcome to Next Wave! We're thrilled to have you on the show today. To kick off, what inspired your recent research in clean compute architectures?`;
     }
     // 4. Dynamic contextual response based on user's actual spoken text
     else {
@@ -360,12 +391,13 @@ FORMAT REQUIRED:
       thinking = `1. Intent Analysis: ${speakerName} introduced "${cleanMessage.substring(0, 45)}...".\n2. Context Extraction: Focusing directly on ${topicKeywords}.\n3. Volley: Acknowledge their point directly and ask an open follow-up.\n4. Cadence Check: 1-2 punchy spoken sentences.`;
 
       spokenResponse = ragSnippet
-        ? `That links directly to your findings in ${ragSnippet.source}. Regarding ${topicKeywords}, how do you see that playing out in practice?`
-        : `That's an insightful point about ${topicKeywords}! What's the main challenge or trade-off you've encountered when putting that into action?`;
+        ? `That links directly to your research in ${ragSnippet.source}. Regarding ${topicKeywords}, how do you see that scaling in real-world deployments?`
+        : `That's a crucial point regarding ${topicKeywords}! What is the primary bottleneck or trade-off you face when putting that into production?`;
     }
 
     return { thinking, spokenResponse };
   }
+
 
   _parseThinkingAndResponse(rawText) {
     let thinking = "";

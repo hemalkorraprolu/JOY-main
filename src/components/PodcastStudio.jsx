@@ -54,13 +54,19 @@ export function PodcastStudio() {
   ]);
 
   // Config State
-  const [config, setConfig] = useState({
-    conferenceName: 'Tech AI Summit 2026',
-    topic: 'Scalable Autonomous Reasoning Agents',
-    engine: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? 'groq' : 'browser',
-    groqApiKey: (import.meta.env.VITE_GROQ_API_KEY && !import.meta.env.VITE_GROQ_API_KEY.includes('your_api_key')) ? import.meta.env.VITE_GROQ_API_KEY : '',
-    ollamaModel: 'llama3.2',
-    ollamaUrl: 'http://localhost:11434'
+  // Config State
+  const [config, setConfig] = useState(() => {
+    const savedKey = typeof localStorage !== 'undefined' ? localStorage.getItem('joy_groq_api_key') : null;
+    const activeKey = savedKey || import.meta.env.VITE_GROQ_API_KEY || '';
+    const cleanKey = (activeKey && !activeKey.includes('your_api_key')) ? activeKey : '';
+    return {
+      conferenceName: 'Tech AI Summit 2026',
+      topic: 'Scalable Autonomous Reasoning Agents',
+      engine: 'groq',
+      groqApiKey: cleanKey,
+      ollamaModel: 'llama3.2',
+      ollamaUrl: 'http://localhost:11434'
+    };
   });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -129,11 +135,14 @@ export function PodcastStudio() {
   };
 
   const handleStartInterview = async () => {
+    if (audioRef.current) {
+      audioRef.current.unlockAudioContext();
+    }
     setStageStatus('thinking');
     setCurrentThinking('JOY is retrieving guest background facts from RAG Knowledge Base and framing the opening question...');
 
     try {
-      const response = await agentRef.current.generateOpening();
+      const response = await agentRef.current.generateOpening(activeGuestId);
       setCurrentThinking(response.thinking);
 
       setTranscript([{
@@ -148,6 +157,7 @@ export function PodcastStudio() {
       audioRef.current.speakText(response.spokenResponse, {
         pitch: hostPersona.pitch,
         rate: hostPersona.rate,
+        voiceName: hostPersona.voice || "en-US-AvaNeural",
         onEnd: () => setStageStatus('idle')
       });
 
@@ -160,6 +170,9 @@ export function PodcastStudio() {
   };
 
   const handleToggleListening = () => {
+    if (audioRef.current) {
+      audioRef.current.unlockAudioContext();
+    }
     if (stageStatus === 'listening_guest') {
       audioRef.current.stopListening();
       if (guestText.trim()) {
@@ -233,6 +246,7 @@ export function PodcastStudio() {
       audioRef.current.speakText(response.spokenResponse, {
         pitch: hostPersona.pitch,
         rate: hostPersona.rate,
+        voiceName: hostPersona.voice || "en-US-AvaNeural",
         onEnd: () => setStageStatus('idle')
       });
     } catch (err) {
