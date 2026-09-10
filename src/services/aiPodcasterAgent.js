@@ -79,6 +79,7 @@ export class AIPodcasterAgent {
 
     this.guests = config.guests || [];
     this.hostPersonaId = config.hostPersonaId || 'alex';
+    this.userRole = config.userRole || 'general';
 
     this.ragKB = new RAGKnowledgeBase();
     this.history = [];
@@ -101,7 +102,7 @@ export class AIPodcasterAgent {
     });
   }
 
-  setEngineConfig({ engine, groqApiKey, topic, conferenceName }) {
+  setEngineConfig({ engine, groqApiKey, topic, conferenceName, userRole }) {
     if (engine) this.engine = engine;
     if (groqApiKey !== undefined) {
       this.groqApiKey = groqApiKey;
@@ -111,6 +112,11 @@ export class AIPodcasterAgent {
     }
     if (topic) this.topic = topic;
     if (conferenceName) this.conferenceName = conferenceName;
+    if (userRole) this.userRole = userRole;
+  }
+
+  setUserRole(role) {
+    this.userRole = role;
   }
 
   setGuests(guests) {
@@ -140,7 +146,7 @@ export class AIPodcasterAgent {
     const activeGuest = (guestId ? this.guests.find(g => g.id === guestId) : null) || this.guests[0];
     const guestName = activeGuest ? activeGuest.name : '';
 
-    let defaultOpeningText = `Welcome to Next Wave Summit! I'm Joy, your official AI assistant. Today we're exploring ${this.topic}. How can I assist you with keynotes, speakers, or session tracks today?`;
+    let defaultOpeningText = `Welcome to Next Wave Summit! I'm Joy, your official AI assistant. To help me tailor our conversation, tell me: are you a Keynote Speaker, Student Researcher, Event Participant, or Visitor today?`;
 
     try {
       const chatUrl = getApiUrl('/api/chat');
@@ -148,8 +154,9 @@ export class AIPodcasterAgent {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: guestName ? `Generate a warm 2-sentence opening for speaker ${guestName}` : `Welcome attendees to Next Wave Summit`,
-          mode: "interview"
+          message: guestName ? `Generate a warm 2-sentence opening for speaker ${guestName}` : `Welcome user to Next Wave Summit and ask if they are a speaker, student, participant, or visitor`,
+          mode: "interview",
+          user_role: this.userRole
         })
       });
 
@@ -157,7 +164,7 @@ export class AIPodcasterAgent {
         const data = await res.json();
         if (data.response && data.response.length > 15) {
           return {
-            thinking: `1. Intent: Event Opening & Welcome.\n2. Persona: ${this._getPersona().name}.\n3. Action: Greet attendees and launch topic context (${this.topic}).`,
+            thinking: `1. Intent: Event Opening & Role Selection Inquiry.\n2. Persona: ${this._getPersona().name}.\n3. Action: Greet user and inquire about their role.`,
             spokenResponse: data.response,
             citations: data.citations || []
           };
@@ -168,7 +175,7 @@ export class AIPodcasterAgent {
     }
 
     return {
-      thinking: `1. Intent: Default Event Welcome.\n2. Action: Greet attendee at Next Wave Summit.`,
+      thinking: `1. Intent: Default Event Welcome.\n2. Action: Greet attendee at Next Wave Summit and ask their role.`,
       spokenResponse: defaultOpeningText,
       citations: []
     };
@@ -189,7 +196,8 @@ export class AIPodcasterAgent {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: guestStatement,
-          mode: "interview"
+          mode: "interview",
+          user_role: this.userRole
         })
       });
 

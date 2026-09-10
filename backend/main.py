@@ -66,6 +66,7 @@ def verify_organiser_auth(x_organiser_secret: Optional[str] = Header(None, alias
 class ChatRequest(BaseModel):
     message: str
     mode: str = "ask_joy"  # 'ask_joy', 'speakers', 'guide', 'interview'
+    user_role: str = "general"  # 'speaker', 'student', 'participant', 'organiser', 'general'
     speaker_id: Optional[str] = None
     language: str = "en"  # 'en', 'hi', 'hinglish'
     voice_engine: str = "neutral"  # 'indic_f5', 'open_voice', 'neutral'
@@ -113,10 +114,41 @@ class TTSRequest(BaseModel):
     speaker_id: Optional[str] = None
 
 
-# --- System Prompts ---
+# --- System Prompts & Role Modifiers ---
+
+ROLE_PROMPT_MODIFIERS = {
+    "speaker": """
+TARGET USER ROLE: Keynote Speaker / Expert.
+CONVERSATIONAL STYLE & TECHNICAL DEPTH:
+- Address the user as a peer expert with high technical depth.
+- Discuss advanced domain topics (e.g., carbon-aware neural reasoning, sparse architectures, hardware-software co-design, green datacenters).
+- Ask thought-provoking, sharp research-backed follow-up questions suitable for a summit keynote speaker.
+""",
+    "student": """
+TARGET USER ROLE: Student Researcher / Contestant.
+CONVERSATIONAL STYLE & TECHNICAL DEPTH:
+- Be encouraging, inspiring, and educational.
+- Explain technical concepts clearly, offering advice on research methodology, project presentation, and student tracks at Next Wave.
+- Keep questions motivating and supportive.
+""",
+    "participant": """
+TARGET USER ROLE: Event Participant / Visitor.
+CONVERSATIONAL STYLE & TECHNICAL DEPTH:
+- Be extremely welcoming, clear, and accessible. Avoid unnecessary dense jargon.
+- Focus on session highlights, schedule guidance, venue locations, and key summit takeaways.
+- Keep answers punchy, easy to follow, and engaging.
+""",
+    "organiser": """
+TARGET USER ROLE: Summit Organiser / Host.
+CONVERSATIONAL STYLE & TECHNICAL DEPTH:
+- Be crisp, operational, and direct. Focus on event logistics, speaker materials, and administrative capabilities.
+"""
+}
 
 JOY_SUMMIT_PROMPT = """You are Joy, the official AI assistant for the Next Wave Summit.
 Available to speakers, participants, students, organisers, and visitors.
+
+{role_modifier}
 
 Core Principles:
 1. ACCURACY & ZERO HALLUCINATION: Answer using ONLY the provided verified event context. If no confirmed information exists, output the exact phrase: "I don't have confirmed information for that yet. Please check with the Next Wave Summit organising team."
@@ -128,9 +160,12 @@ Retrieved Verified Summit Context:
 {context}
 """
 
-JOY_INTERVIEW_PROMPT = """You are Joy, co-hosting a podcast session at the Next Wave Summit.
+JOY_INTERVIEW_PROMPT = """You are Joy, co-hosting a podcast/interview session at the Next Wave Summit.
+
+{role_modifier}
+
 Conversational style: 1-2 punchy spoken sentences (under 40 words).
-Acknowledge the speaker's last point briefly, offer a sharp reflection, and toss a open volley follow-up question.
+Acknowledge the speaker's last point briefly, offer a sharp reflection, and toss an open volley follow-up question.
 Rely strictly on verified context when referencing event or speaker details.
 
 Retrieved Verified Summit Context:
@@ -210,9 +245,10 @@ async def chat_endpoint(req: ChatRequest):
         client = Groq(api_key=groq_key)
         prompt_template = JOY_INTERVIEW_PROMPT if req.mode == "interview" else JOY_SUMMIT_PROMPT
         
-        # Inject RAG context if present, or general Next Wave Summit background
+        # Inject RAG context and role modifier
         effective_context = context if has_sufficient_context else "Next Wave Summit 2026 is a global conference on AI innovation, sustainable computing, decarbonizing neural workloads, and green silicon."
-        system_prompt = prompt_template.format(context=effective_context)
+        role_mod = ROLE_PROMPT_MODIFIERS.get(req.user_role, "")
+        system_prompt = prompt_template.format(context=effective_context, role_modifier=role_mod)
 
         # Try available models in order of preference
         model_fallbacks = [

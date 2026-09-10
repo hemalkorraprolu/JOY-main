@@ -11,10 +11,12 @@ import { MessageSquare, X, Brain, Sparkles, ThumbsUp, ThumbsDown, Check, Send, M
  *  - transcript: array of message objects
  *  - guestText: string — current interim text while listening
  *  - stageStatus: string
+ *  - activeRole: string
  *  - onFeedback: (turnId, rating, tags, comment) => void
  *  - onSendMessage: (text: string) => void
  *  - onToggleMic: () => void
  *  - onReplayVoice: (text: string) => void
+ *  - onSelectRole: (roleKey: string, roleName: string) => void
  */
 export function ConversationPanel({
   isOpen,
@@ -22,10 +24,12 @@ export function ConversationPanel({
   transcript = [],
   guestText = '',
   stageStatus = 'idle',
+  activeRole = 'general',
   onFeedback,
   onSendMessage,
   onToggleMic,
-  onReplayVoice
+  onReplayVoice,
+  onSelectRole
 }) {
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
@@ -470,43 +474,71 @@ export function ConversationPanel({
             )}
           </div>
 
-          {/* Quick Suggestion Chips */}
-          {transcript.length <= 2 && (
+          {/* Role Adaptation Banner */}
+          <div style={{
+            padding: '8px 16px',
+            borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+            background: 'rgba(15, 23, 42, 0.5)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            flexShrink: 0
+          }}>
             <div style={{
-              padding: '8px 16px',
-              borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+              fontSize: '0.7rem',
+              color: '#94a3b8',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <span>Conversational Mode / Your Role:</span>
+              <span style={{ color: '#34d399', textTransform: 'capitalize' }}>
+                {activeRole === 'speaker' ? '🎙️ Keynote Expert' :
+                 activeRole === 'student' ? '🎓 Student Contestant' :
+                 activeRole === 'participant' ? '👥 Event Participant' :
+                 activeRole === 'organiser' ? '🛡️ Summit Organiser' : '✨ General Overview'}
+              </span>
+            </div>
+
+            <div style={{
               display: 'flex',
               gap: '6px',
               overflowX: 'auto',
               whiteSpace: 'nowrap',
-              flexShrink: 0
+              paddingBottom: '2px'
             }}>
               {[
-                "What is Next Wave Summit?",
-                "Who are the keynote speakers?",
-                "Tell me about sustainable AI"
-              ].map((chip, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSuggestionClick(chip)}
-                  disabled={isThinking}
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    color: '#94a3b8',
-                    borderRadius: '14px',
-                    padding: '4px 10px',
-                    fontSize: '0.72rem',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    transition: 'all 0.15s'
-                  }}
-                >
-                  {chip}
-                </button>
-              ))}
+                { key: 'speaker', label: '🎙️ Keynote Speaker', name: 'Keynote Speaker' },
+                { key: 'student', label: '🎓 Student / Contestant', name: 'Student Researcher' },
+                { key: 'participant', label: '👥 Participant / Visitor', name: 'Event Participant' },
+                { key: 'organiser', label: '🛡️ Organiser', name: 'Summit Organiser' }
+              ].map((r) => {
+                const isSelected = activeRole === r.key;
+                return (
+                  <button
+                    key={r.key}
+                    type="button"
+                    onClick={() => onSelectRole?.(r.key, r.name)}
+                    style={{
+                      background: isSelected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.06)',
+                      border: `1px solid ${isSelected ? '#10b981' : 'rgba(255, 255, 255, 0.12)'}`,
+                      color: isSelected ? '#34d399' : '#cbd5e1',
+                      borderRadius: '14px',
+                      padding: '4px 10px',
+                      fontSize: '0.72rem',
+                      fontWeight: isSelected ? 700 : 500,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    {r.label}
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
 
           {/* Input Footer */}
           <form

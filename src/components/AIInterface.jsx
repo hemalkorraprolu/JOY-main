@@ -65,13 +65,16 @@ export function AIInterface() {
   const [knowledgeText, setKnowledgeText] = useState('');
   const [indexedDocs, setIndexedDocs] = useState(['Next Wave Summit 2026 Keynote Agenda & Schedule']);
 
+  const [userRole, setUserRole] = useState('general'); // 'speaker', 'student', 'participant', 'organiser', 'general'
+
   // Initialize Agent and Audio Engine
   useEffect(() => {
     agentRef.current = new AIPodcasterAgent({
       conferenceName: config.conferenceName,
       topic: config.topic,
       guests,
-      hostPersonaId
+      hostPersonaId,
+      userRole
     });
 
     audioRef.current = new AudioEngine({
@@ -88,11 +91,11 @@ export function AIInterface() {
   // Sync Agent Config
   useEffect(() => {
     if (agentRef.current) {
-      agentRef.current.setEngineConfig(config);
+      agentRef.current.setEngineConfig({ ...config, userRole });
       agentRef.current.setGuests(guests);
       agentRef.current.setHostPersona(hostPersonaId);
     }
-  }, [config, guests, hostPersonaId]);
+  }, [config, guests, hostPersonaId, userRole]);
 
   const hostPersona = HOST_PERSONAS[hostPersonaId] || HOST_PERSONAS.alex;
 
@@ -104,8 +107,8 @@ export function AIInterface() {
           id: `welcome_${Date.now()}`,
           sender: 'host',
           name: 'Joy (AI Assistant)',
-          text: `Welcome to Next Wave Summit! I'm Joy, your official AI assistant. How can I help you with our schedule, keynote speakers, session tracks, or sustainable tech today?`,
-          thinking: '1. Intent: Welcome attendee to Next Wave Summit.\n2. Action: Present capabilities & offer assistance.',
+          text: `Welcome to Next Wave Summit! I'm Joy, your official AI assistant. To help me tailor our conversation depth, tell me: are you a Keynote Speaker, Student Researcher, Event Participant, or Visitor today?`,
+          thinking: '1. Intent: Initial Welcome & Role Inquiry.\n2. Action: Prompt user to select their role for adaptive responses.',
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -279,6 +282,43 @@ export function AIInterface() {
     }
   };
 
+  const handleSelectRole = (roleKey, roleName) => {
+    setUserRole(roleKey);
+    if (agentRef.current) {
+      agentRef.current.setUserRole(roleKey);
+    }
+
+    const ackText = roleKey === 'speaker'
+      ? `Understood! As a Keynote Speaker, I will engage with you at high technical depth on AI sustainability, sparse compute, and green datacenter architectures. What research topic or session would you like to discuss?`
+      : roleKey === 'student'
+      ? `Awesome! As a Student Researcher, I'll keep our discussion inspiring and clear, offering guidance on research methodologies, project presentations, and Next Wave tracks. What topic or project are you working on?`
+      : roleKey === 'participant'
+      ? `Welcome! As an Event Participant, I'll guide you through session highlights, schedule details, keynote summaries, and venue directions. What would you like to explore first?`
+      : `Welcome Organiser! I'm ready to assist with schedule logistics, speaker profiles, and event knowledge management.`;
+
+    const turnId = `role_ack_${Date.now()}`;
+    setTranscript(prev => [...prev, {
+      id: turnId,
+      sender: 'host',
+      name: 'Joy (AI Assistant)',
+      text: ackText,
+      thinking: `1. Intent: Acknowledge user role selection (${roleName}).\n2. Action: Set target persona depth (${roleKey}).`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
+
+    if (audioRef.current) {
+      audioRef.current.unlockAudioContext();
+      audioRef.current.stopSpeaking();
+      setStageStatus('speaking_host');
+      audioRef.current.speakText(ackText, {
+        pitch: hostPersona.pitch,
+        rate: hostPersona.rate,
+        voiceName: hostPersona.voice || "en-US-AvaNeural",
+        onEnd: () => setStageStatus('idle')
+      });
+    }
+  };
+
   return (
     <div className="ai-interface">
       <StarField />
@@ -341,10 +381,12 @@ export function AIInterface() {
           transcript={transcript}
           guestText={guestText || interimText}
           stageStatus={stageStatus}
+          activeRole={userRole}
           onFeedback={handleFeedbackSubmit}
           onSendMessage={handleSendMessage}
           onToggleMic={handleToggleListening}
           onReplayVoice={handleReplayVoice}
+          onSelectRole={handleSelectRole}
         />
 
         <MemoryPanel
